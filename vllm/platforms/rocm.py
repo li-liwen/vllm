@@ -189,6 +189,7 @@ _ON_GFX12X = any(arch in _GCN_ARCH for arch in ["gfx12"])
 _ON_MI3XX = any(arch in _GCN_ARCH for arch in ["gfx942", "gfx950"])
 _ON_GFX9 = any(arch in _GCN_ARCH for arch in ["gfx90a", "gfx942", "gfx950"])
 _ON_GFX90A = "gfx90a" in _GCN_ARCH
+_ON_GFX908 = "gfx908" in _GCN_ARCH
 _ON_GFX942 = "gfx942" in _GCN_ARCH
 _ON_GFX950 = "gfx950" in _GCN_ARCH
 
@@ -290,6 +291,40 @@ def on_gfx942() -> bool:
 
 def on_gfx950() -> bool:
     return _ON_GFX950
+
+
+def on_gfx908() -> bool:
+    """True iff every visible GPU is gfx908 (CDNA1 / MI100)."""
+    return _ON_GFX908
+
+
+# ----------------------------------------------------------------------
+# DeepSeek-V4 on gfx908: single-source-of-truth dispatch helpers.
+#
+# `is_gfx908()` and `is_dsv4_gfx908_path()` exist so every gfx908-specific
+# DSv4 dispatch site reads from one place. Disabling the custom path is a
+# one-line opt-out via ``VLLM_DSV4_GFX908=0``, which keeps the upstream
+# review surface small.
+# ----------------------------------------------------------------------
+
+
+def is_gfx908() -> bool:
+    """Alias for :func:`on_gfx908`. Provided for DSv4-on-gfx908 dispatch
+    call sites that want to read ``is_gfx908()`` for clarity."""
+    return _ON_GFX908
+
+
+def is_dsv4_gfx908_path() -> bool:
+    """True iff DSv4 should dispatch through the gfx908 custom kernels
+    (T7.2 FP8 dense GEMM, T7.3 MXFP4 MoE GEMM, T7.4 mHC Triton).
+
+    Off-switch: ``VLLM_DSV4_GFX908=0`` reverts to the platform default
+    paths (e.g. the Triton FP8 einsum fallback from PR #40871). This is
+    the single dispatch predicate; do not duplicate it elsewhere.
+    """
+    if not _ON_GFX908:
+        return False
+    return os.environ.get("VLLM_DSV4_GFX908", "1") != "0"
 
 
 @cache

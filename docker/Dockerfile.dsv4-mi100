@@ -15,13 +15,10 @@
 #
 # Stages
 # ------
-#  1. base       : ROCm + Python + uv + a known-good torch / Triton.
-#  2. build_aiter: AITER for gfx908 (CK off, FP8/FP4 off — see refs in
-#                  reference/Dockerfile.aiter-mi100). AITER is included
-#                  for its Triton-backed RoPE / RMSNorm paths.
-#  3. build_vllm : install our vLLM fork (pip -e .) so dispatch hits
+#  1. base       : ROCm + Python + uv.
+#  2. build_vllm : install torch / Triton and this vLLM fork so dispatch hits
 #                  the gfx908 kernels.
-#  4. runtime    : minimal layer with only what the server needs.
+#  3. runtime    : runnable server layer with the built Python environment.
 #
 # Notes
 # -----
@@ -30,10 +27,11 @@
 # * We pin ROCM_BASE for the runtime stage to the same image used in
 #   the build stages — version mismatches cause silent JIT failures
 #   at first inference (agents.md §12 pitfall #1).
+# * AITER is intentionally NOT built here. The MI100 reference Dockerfile
+#   skips AITER because current AITER wheels do not support gfx908. DSv4
+#   FP8/FP4 work is routed through the Triton kernels in this branch.
 # * tilelang is intentionally NOT installed: the gfx908 dispatch path
-#   is Triton-only (D5). The model code's TileLang import is gated
-#   behind current_platform.is_cuda_alike() in mhc.py and never fires
-#   on ROCm.
+#   is Triton-only (D5).
 
 ARG ROCM_BASE=rocm/dev-ubuntu-22.04:7.2.1-complete
 ARG PYTHON_VERSION=3.12
@@ -50,7 +48,6 @@ ENV PATH=/opt/rocm/llvm/bin:/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sb
 ENV ROCM_PATH=/opt/rocm
 ENV LD_LIBRARY_PATH=/opt/rocm/lib:/usr/local/lib:
 ENV PYTORCH_ROCM_ARCH=gfx908
-ENV AITER_ROCM_ARCH=gfx908
 ENV HSA_NO_SCRATCH_RECLAIM=1
 ENV DEBIAN_FRONTEND=noninteractive
 ENV UV_HTTP_TIMEOUT=500
@@ -84,15 +81,13 @@ RUN pip install --no-cache-dir -U \
        packaging "cmake<4" ninja wheel "setuptools<80" pybind11 Cython
 
 # =====================================================================
-# Stage 2 — AITER for gfx908
+# Stage 2 - vLLM (this fork) install
 # =====================================================================
-FROM base AS build_aiter
+FROM base AS build_vllm
 
-ARG AITER_BRANCH=59bd8ff2
-ARG AITER_REPO=https://github.com/ROCm/aiter.git
-
-# Install matching torch + Triton before AITER so its build picks them
-# up. We rely on the wheels published by ROCm/pytorch for ROCm 7.2.
+# Install torch + Triton before vLLM so setup.py does not pull CUDA wheels.
+# TODO(milestone2): replace these bootstrap wheels with the exact gfx908
+# torch/Triton wheel chain used by reference/Dockerfile.mi100_base.
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir \
         torch==2.9.1 \
@@ -100,30 +95,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir triton==3.4.0 pyyaml
-
-WORKDIR /tmp
-RUN git clone ${AITER_REPO} aiter \
-    && cd aiter \
-    && git checkout ${AITER_BRANCH} \
-    && git submodule update --init --recursive \
-    && pip install -r requirements.txt
-
-# Build AITER for gfx908 with the CK / FP8 / FP4 paths off (the gfx908
-# code objects do not exist for those). PREBUILD_KERNELS=1 reduces
-# first-launch JIT cost.
-RUN cd /tmp/aiter \
-    && PREBUILD_KERNELS=1 GPU_ARCHS=gfx908 \
-       PYTORCH_ROCM_ARCH=gfx908 \
-       AITER_DISABLE_CK=1 \
-       AITER_DISABLE_FP8=1 \
-       AITER_DISABLE_FP4=1 \
-       python3 setup.py bdist_wheel --dist-dir=/app/install
-RUN pip install --no-cache-dir /app/install/aiter*.whl
-
-# =====================================================================
-# Stage 3 — vLLM (this fork) install
-# =====================================================================
-FROM build_aiter AS build_vllm
 
 WORKDIR /app/vllm
 COPY . /app/vllm
@@ -136,9 +107,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -e . --no-build-isolation
 
 # =====================================================================
-# Stage 4 — runtime
+# Stage 3 - runtime
 # =====================================================================
-FROM ${ROCM_BASE} AS runtime
+FROM base AS runtime
 
 ARG PYTHON_VERSION
 ENV PYTHON_VERSION=${PYTHON_VERSION}
@@ -153,7 +124,16 @@ ENV PYTHONHASHSEED=0
 ENV PYTORCH_HIP_ALLOC_CONF=expandable_segments:True
 ENV VLLM_DSV4_GFX908=1
 ENV VLLM_MI100_TORCH_COMPILE=1
-ENV VLLM_ROCM_USE_AITER=1
+ENV VLLM_ROCM_USE_AITER=0
+ENV VLLM_ROCM_USE_AITER_LINEAR=0
+ENV VLLM_ROCM_USE_AITER_MOE=0
+ENV VLLM_ROCM_USE_AITER_MHA=0
+ENV VLLM_ROCM_USE_AITER_MLA=0
+ENV VLLM_ROCM_USE_AITER_RMSNORM=0
+ENV VLLM_ROCM_USE_AITER_FP8BMM=0
+ENV VLLM_ROCM_USE_AITER_FP4BMM=0
+ENV VLLM_ROCM_USE_AITER_FP4_ASM_GEMM=0
+ENV VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION=0
 ENV TOKENIZERS_PARALLELISM=false
 ENV SAFETENSORS_FAST_GPU=1
 ENV HIP_FORCE_DEV_KERNARG=1
@@ -162,7 +142,9 @@ ENV HIP_FORCE_DEV_KERNARG=1
 # (agents.md §1.5).
 ENV VLLM_ATTENTION_BACKEND=TRITON_ATTN
 
-# Bring over the built python environment + the editable vllm tree.
+# Bring over the built python environment + the editable vllm tree. The
+# runtime stage inherits from ``base`` so /usr/bin/python3.12 and the OS
+# libraries installed there are present.
 COPY --from=build_vllm /usr/local/lib/python${PYTHON_VERSION} /usr/local/lib/python${PYTHON_VERSION}
 COPY --from=build_vllm /usr/local/bin /usr/local/bin
 COPY --from=build_vllm /app/vllm /app/vllm

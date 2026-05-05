@@ -41,10 +41,12 @@ def _mhc_pre_gemm_sqrsum_kernel(
     M_ptr,         # mixes_out: [num_tokens, hc_mult3] fp32
     S_ptr,         # sqrsum_out: [num_tokens] fp32
     num_tokens,
-    hidden_size,
     HC_MULT: tl.constexpr,
     HC_MULT3: tl.constexpr,
+    HIDDEN_SIZE: tl.constexpr,
     BLOCK_H: tl.constexpr,
+    NUM_H_BLOCKS: tl.constexpr,
+    BLOCK_MIXES: tl.constexpr,
 ):
     """Per-token reduction over (hc_mult, hidden_size).
 
@@ -60,27 +62,30 @@ def _mhc_pre_gemm_sqrsum_kernel(
     pid_t = tl.program_id(0)
 
     sqrsum = tl.zeros((1,), dtype=tl.float32)
-    mixes = tl.zeros((HC_MULT3,), dtype=tl.float32)
+    # Triton block dimensions must be powers of two. HC_MULT3 is 24 for
+    # DSv4's hc_mult=4, so keep a padded register vector and mask stores.
+    mixes = tl.zeros((BLOCK_MIXES,), dtype=tl.float32)
+    mix_idx = tl.arange(0, BLOCK_MIXES)
 
-    hc_dim = HC_MULT * hidden_size
+    hc_dim = HC_MULT * HIDDEN_SIZE
 
-    for h_iter in range(0, tl.cdiv(hidden_size, BLOCK_H)):
+    for h_iter in tl.static_range(0, NUM_H_BLOCKS):
         h_base = h_iter * BLOCK_H
         offs_h = h_base + tl.arange(0, BLOCK_H)
-        h_mask = offs_h < hidden_size
+        h_mask = offs_h < HIDDEN_SIZE
 
         for m in tl.static_range(0, HC_MULT):
             r_ptrs = (
                 R_ptr
-                + pid_t * (HC_MULT * hidden_size)
-                + m * hidden_size
+                + pid_t * (HC_MULT * HIDDEN_SIZE)
+                + m * HIDDEN_SIZE
                 + offs_h
             )
             r = tl.load(r_ptrs, mask=h_mask, other=0.0).to(tl.float32)
             sqrsum += tl.sum(r * r, axis=0)
 
             for j in tl.static_range(0, HC_MULT3):
-                f_ptrs = F_ptr + j * hc_dim + m * hidden_size + offs_h
+                f_ptrs = F_ptr + j * hc_dim + m * HIDDEN_SIZE + offs_h
                 f = tl.load(f_ptrs, mask=h_mask, other=0.0)
                 # Accumulate into mixes[j]. Triton lowers this small
                 # static-range loop into a register-resident accumulator
@@ -88,11 +93,14 @@ def _mhc_pre_gemm_sqrsum_kernel(
                 contrib = tl.sum(r * f, axis=0)
                 # Construct a one-hot update so we can keep `mixes` as
                 # a single vector.
-                idx = tl.arange(0, HC_MULT3)
-                mixes = mixes + tl.where(idx == j, contrib, 0.0)
+                mixes = mixes + tl.where(mix_idx == j, contrib, 0.0)
 
-    tl.store(S_ptr + pid_t, sqrsum)
-    tl.store(M_ptr + pid_t * HC_MULT3 + tl.arange(0, HC_MULT3), mixes)
+    tl.store(S_ptr + pid_t + tl.arange(0, 1), sqrsum)
+    tl.store(
+        M_ptr + pid_t * HC_MULT3 + mix_idx,
+        mixes,
+        mask=mix_idx < HC_MULT3,
+    )
 
 
 def _mhc_pre_gemm_sqrsum_triton(
@@ -125,6 +133,8 @@ def _mhc_pre_gemm_sqrsum_triton(
         return mixes, sqrsum
 
     block_h = 256 if hidden_size >= 256 else triton.next_power_of_2(hidden_size)
+    num_h_blocks = triton.cdiv(hidden_size, block_h)
+    block_mixes = triton.next_power_of_2(hc_mult3)
     grid = (num_tokens,)
     _mhc_pre_gemm_sqrsum_kernel[grid](
         residual_flat,
@@ -132,10 +142,12 @@ def _mhc_pre_gemm_sqrsum_triton(
         mixes,
         sqrsum,
         num_tokens,
-        hidden_size,
         HC_MULT=hc_mult,
         HC_MULT3=hc_mult3,
+        HIDDEN_SIZE=hidden_size,
         BLOCK_H=block_h,
+        NUM_H_BLOCKS=num_h_blocks,
+        BLOCK_MIXES=block_mixes,
         num_warps=4,
         num_stages=2,
     )

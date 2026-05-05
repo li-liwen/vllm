@@ -161,6 +161,48 @@ def _query_gcn_arch_from_amdsmi() -> str:
     raise RuntimeError("amdsmi did not return valid GCN arch")
 
 
+def _get_visible_device_indices(device_count: int) -> list[int] | None:
+    visible_devices = (
+        os.environ.get("CUDA_VISIBLE_DEVICES")
+        or os.environ.get("HIP_VISIBLE_DEVICES")
+        or os.environ.get("ROCR_VISIBLE_DEVICES")
+    )
+    if visible_devices is None:
+        return list(range(device_count))
+
+    parts = [part.strip() for part in visible_devices.split(",") if part.strip()]
+    try:
+        indices = [int(part) for part in parts]
+    except ValueError:
+        return None
+
+    if any(index < 0 or index >= device_count for index in indices):
+        return None
+    return indices
+
+
+@with_amdsmi_context
+def _query_visible_gcn_arches_from_amdsmi() -> tuple[str, ...]:
+    handles = amdsmi_get_processor_handles()
+    if not handles:
+        raise RuntimeError("amdsmi did not return any processor handles")
+
+    visible_indices = _get_visible_device_indices(len(handles))
+    if visible_indices is None:
+        raise RuntimeError("non-integer ROCm visible-device selector")
+
+    arches: list[str] = []
+    for index in visible_indices:
+        asic_info = amdsmi_get_gpu_asic_info(handles[index])
+        target_gfx = asic_info.get("target_graphics_version", "")
+        if not target_gfx:
+            raise RuntimeError(
+                f"amdsmi did not return valid GCN arch for device {index}"
+            )
+        arches.append(target_gfx)
+    return tuple(arches)
+
+
 def _get_gcn_arch() -> str:
     """
     Get GCN arch via amdsmi (no CUDA init), fallback to torch.cuda.
@@ -179,17 +221,44 @@ def _get_gcn_arch() -> str:
     return torch.cuda.get_device_properties("cuda").gcnArchName
 
 
+def _get_visible_gcn_arches() -> tuple[str, ...]:
+    """Get GCN arch for every visible ROCm device.
+
+    Prefer amdsmi to avoid CUDA initialization. If the visibility selector
+    is not a simple integer list (for example UUID-based), fall back to
+    torch's remapped visible devices.
+    """
+    try:
+        return _query_visible_gcn_arches_from_amdsmi()
+    except Exception as e:
+        logger.debug("Failed to get visible GCN arches via amdsmi: %s", e)
+        logger.warning_once(
+            "Failed to get all visible GCN arches via amdsmi, falling back "
+            "to torch.cuda. This will initialize CUDA."
+        )
+
+    device_count = _rocm_device_count_stateless(os.environ.get("CUDA_VISIBLE_DEVICES"))
+    return tuple(
+        torch.cuda.get_device_properties(index).gcnArchName
+        for index in range(device_count)
+    )
+
+
 # Resolve once at module load. Uses amdsmi (no CUDA init) so Ray workers
 # can still set CUDA_VISIBLE_DEVICES after import.
 # These are plain Python bools — fully torch.compile/Dynamo safe.
 _GCN_ARCH = _get_gcn_arch()
+_VISIBLE_GCN_ARCHES = _get_visible_gcn_arches()
 
 _ON_GFX1X = any(arch in _GCN_ARCH for arch in ["gfx11", "gfx12"])
 _ON_GFX12X = any(arch in _GCN_ARCH for arch in ["gfx12"])
 _ON_MI3XX = any(arch in _GCN_ARCH for arch in ["gfx942", "gfx950"])
 _ON_GFX9 = any(arch in _GCN_ARCH for arch in ["gfx90a", "gfx942", "gfx950"])
 _ON_GFX90A = "gfx90a" in _GCN_ARCH
-_ON_GFX908 = "gfx908" in _GCN_ARCH
+_ON_GFX908 = (
+    len(_VISIBLE_GCN_ARCHES) > 0
+    and all("gfx908" in arch for arch in _VISIBLE_GCN_ARCHES)
+)
 _ON_GFX942 = "gfx942" in _GCN_ARCH
 _ON_GFX950 = "gfx950" in _GCN_ARCH
 

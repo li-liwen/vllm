@@ -88,3 +88,14 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
 3. Base-image stale vllm + pip editable namespace stubs shadow submodule imports → purged in
    Dockerfile (both before install -e and after).
 Image chain: glm53f-build:fix6 → glm53f:latest (commit-tagged rebuilds pending for reproducibility).
+
+## Phase 4 MILESTONE — native MTP enabled (2026-09-11 22:41 UTC)
+- [x] GLM-5.3-Flash serves with native MTP depth 1 on TP4xPP2. Application startup complete.
+- [x] Draft loaded 28/30 params per rank; the 2 untouched are qzeros (expected: symmetric uint4b8
+      ignores qzeros; checkpoint's 0x77777777 has no param home under MoeWNA16-symmetric).
+- [x] Draft construction: MoE prefix 'model.layers.45.mlp.experts' (no mtp_block infix — that comes
+      only from the module attribute path). INC block check needed a root remap from
+      'model.layers.' onto the (mapper-rewritten) 'language_model.model.layers' block.
+- [x] Streaming bursts: 106/106 multi-token bursts (MTP drafting active), coherent outputs.
+- Boot fixes: INC parser root remap (config_parser.py); diagnosis logs added in
+  inc.py/mtp.py/model.py/routed_experts.py (to be cleaned before final image).

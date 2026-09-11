@@ -104,6 +104,7 @@ class XPUMLASparseMetadata(AttentionMetadata):
     num_decodes: int = 0
     num_prefills: int = 0
     num_decode_tokens: int = 0
+    num_prefill_tokens: int = 0
 
 
 @dataclass
@@ -179,6 +180,7 @@ class XPUMLASparseMetadataBuilder(AttentionMetadataBuilder[XPUMLASparseMetadata]
             num_decodes=common_attn_metadata.num_reqs,
             num_prefills=0,
             num_decode_tokens=common_attn_metadata.num_actual_tokens,
+            num_prefill_tokens=0,
         )
         return metadata
 

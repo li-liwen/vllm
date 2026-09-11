@@ -8,7 +8,7 @@ FROM btbtyler09/vllm-rocm-gfx908:v0.28.0rc7.dev-q38fn AS build
 ENV VLLM_TARGET_DEVICE=rocm \
     PYTORCH_ROCM_ARCH=gfx908 \
     MAX_JOBS=64 \
-    SETUPTOOLS_SCM_PRETEND_VERSION=0.28.0rc7.dev.glm53.gfx908 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=0.28.0rc7.dev0+glm53.gfx908 \
     UV_LINK_MODE=copy
 
 # Source is bind-mounted at /src/vllm (read-only); build in a writable copy.

@@ -40,3 +40,13 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
 
 ## Phase 2 — checkpoint loading
 - [ ] Not started.
+
+## Phase 2 — checkpoint loading (2026-09-11)
+- [x] safetensors_use_index loader option + 8 CPU tests (all pass in container).
+- [x] INC/auto-round W4A16 dispatch: AutoGPTQLinearMethod defers Marlin verify → TritonW4A16 on
+      ROCm; INC scheme falls back to AutoGPTQ (kernel-choosing) when Marlin unavailable.
+- [x] W4A16 dequant tests incl real checkpoint (5 pass): qzeros 0x77777777 = sym zero 8 ==
+      uint4b8 bias; shapes match gs128; exclusions BF16; no g_idx.
+- [x] INCConfig parses real quantization_config: bits 4, gs 128, sym, packing auto_round:auto_gptq;
+      per-layer resolution: experts 4-bit, shared/conv1d/router/down_proj 16-bit.
+- Remaining for Phase 2 gate: full model load on GPU (deferred to Phase 4 boot at 8K).

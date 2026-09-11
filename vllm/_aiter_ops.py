@@ -152,8 +152,14 @@ def is_aiter_found_and_supported() -> bool:
     VLLM_ROCM_USE_AITER=0, while preventing unwanted JIT warnings for auto-discovery.
     """
     if current_platform.is_rocm() and IS_AITER_FOUND:
-        from vllm.platforms.rocm import get_cdna_version
+        from vllm.platforms.rocm import get_cdna_version, on_gfx908
 
+        # gfx908 (MI100): aiter's CK kernels crash (v_pk_mul_f32 is gfx90a+),
+        # but its Triton kernels (mqa logits, rmsnorm, rope) work and are the
+        # intended gfx908 paths; per-feature envs gate each one. Source:
+        # btbtyler09/vllm-gfx908@mi100-optimized d3bab5eb0 (adapted).
+        if on_gfx908():
+            return True
         return get_cdna_version() > 2
     return False
 
@@ -2491,6 +2497,16 @@ class rocm_aiter_ops:
         """RMSNorm via AITER kernel."""
         import aiter
 
+        # gfx908: aiter's CK rms_norm crashes (v_pk_mul_f32 is gfx90a+);
+        # use its Triton implementation instead. Source:
+        # btbtyler09/vllm-gfx908@mi100-optimized d3bab5eb0.
+        from vllm.platforms.rocm import on_gfx908
+
+        if on_gfx908():
+            from aiter.ops.triton.normalization.rmsnorm import rms_norm
+
+            return rms_norm(x, weight, epsilon)
+
         return aiter.rms_norm(x, weight, epsilon)
 
     @staticmethod
@@ -2506,8 +2522,19 @@ class rocm_aiter_ops:
         """
         import aiter
 
+        # gfx908: CK rmsnorm2d crashes; use the Triton implementation.
+        # Source: btbtyler09/vllm-gfx908@mi100-optimized d3bab5eb0.
+        from vllm.platforms.rocm import on_gfx908
+
         out = torch.empty_like(x)
         residual_out = torch.empty_like(x)
+        if on_gfx908():
+            from aiter.ops.triton.normalization.rmsnorm import rmsnorm2d_fwd_with_add
+
+            rmsnorm2d_fwd_with_add(
+                out, x, residual, residual_out, weight, epsilon, 0
+            )
+            return out, residual_out
         aiter.rmsnorm2d_fwd_with_add(out, x, residual, residual_out, weight, epsilon, 0)
         return out, residual_out
 
@@ -3357,6 +3384,32 @@ class rocm_aiter_ops:
 
         Note: This performs lazy import of aiter.flash_attn_varlen_func
         """
+        from vllm.platforms.rocm import on_gfx908
+
+        if on_gfx908():
+            # aiter's CK FA uses gfx90a+ ISA (v_pk_mul_f32) and crashes on
+            # gfx908; redirect to aiter's Triton implementation (no
+            # min_seqlen_q / sink_ptr support). Source:
+            # btbtyler09/vllm-gfx908@mi100-optimized d3bab5eb0.
+            from aiter.ops.triton.attention.mha import flash_attn_varlen_func
+
+            return flash_attn_varlen_func(
+                q=q,
+                k=k,
+                v=v,
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_seqlen_q,
+                max_seqlen_k=max_seqlen_k,
+                dropout_p=dropout_p,
+                softmax_scale=softmax_scale,
+                causal=causal,
+                window_size=window_size if window_size is not None else (-1, -1),
+                alibi_slopes=alibi_slopes,
+                return_lse=return_lse,
+                out=out,
+            )
+
         from aiter import flash_attn_varlen_func
 
         return flash_attn_varlen_func(

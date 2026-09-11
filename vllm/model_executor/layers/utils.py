@@ -331,6 +331,8 @@ def rocm_unquantized_gemm_impl(
     if use_aiter_triton_gemm(n, m, k, x.dtype) and not (on_gfx1250() and k % 256 != 0):
         from aiter.ops.triton.gemm_a16w16 import gemm_a16w16
 
+        if x.dtype != weight.dtype:
+            x = x.to(weight.dtype)
         return gemm_a16w16(x, weight, bias)
 
     use_skinny = (

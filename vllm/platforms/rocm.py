@@ -222,6 +222,7 @@ _ON_GFX12X = any(arch in _GCN_ARCH for arch in ["gfx12"])
 _ON_MI3XX = any(arch in _GCN_ARCH for arch in ["gfx942", "gfx950"])
 _ON_GFX9 = any(arch in _GCN_ARCH for arch in ["gfx90a", "gfx942", "gfx950"])
 _ON_GFX90A = "gfx90a" in _GCN_ARCH
+_ON_GFX908 = "gfx908" in _GCN_ARCH
 _ON_GFX942 = "gfx942" in _GCN_ARCH
 _ON_GFX950 = "gfx950" in _GCN_ARCH
 _ON_GFX1250 = "gfx1250" in _GCN_ARCH
@@ -230,6 +231,35 @@ _ON_CDNA = any(arch in _GCN_ARCH for arch in ["gfx9", "gfx1250"])
 # RDNA = gfx11/gfx12 minus the CDNA-classified gfx1250.
 _ON_RDNA = _ON_GFX1X and not _ON_CDNA
 _ON_RDNA4 = any(arch in _GCN_ARCH for arch in ["gfx1200", "gfx1201"])
+
+# ---------------------------------------------------------------------------
+# gfx908 (MI100) auto-configuration
+# CK kernels crash on gfx908 (v_pk_mul_f32 is gfx90a+). Set safe defaults
+# so users only need VLLM_ROCM_USE_AITER=1 to get optimal gfx908 config.
+# Explicit user env vars always take priority (only set if not already set).
+# Source: btbtyler09/vllm-gfx908@mi100-optimized d3bab5eb0 (adapted).
+# ---------------------------------------------------------------------------
+if _ON_GFX908:
+    _GFX908_DEFAULTS = {
+        # Disable CK-based ops (crash on gfx908)
+        "VLLM_ROCM_USE_AITER_LINEAR": "0",
+        "VLLM_ROCM_USE_AITER_MOE": "0",
+        "VLLM_ROCM_USE_AITER_MHA": "0",
+        "VLLM_ROCM_USE_AITER_MLA": "0",
+        "VLLM_ROCM_USE_AITER_RMSNORM": "0",
+        # Disable FP8/FP4 (no hardware support)
+        "VLLM_ROCM_USE_AITER_FP8BMM": "0",
+        "VLLM_ROCM_USE_AITER_FP4BMM": "0",
+        "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM": "0",
+        # Disable Triton GEMM (tested: -25% regression from dtype cast)
+        "VLLM_ROCM_USE_AITER_TRITON_GEMM": "0",
+        # Enable working Triton paths
+        "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION": "1",
+        "VLLM_ROCM_USE_AITER_TRITON_ROPE": "1",
+    }
+    for _var, _val in _GFX908_DEFAULTS.items():
+        if _var not in os.environ:
+            os.environ[_var] = _val
 
 
 def _capability_from_gcn_arch(gcn_arch: str) -> tuple[int, int] | None:
@@ -341,6 +371,10 @@ def on_gfx9() -> bool:
 
 def on_gfx90a() -> bool:
     return _ON_GFX90A
+
+
+def on_gfx908() -> bool:
+    return _ON_GFX908
 
 
 def on_gfx942() -> bool:

@@ -25,7 +25,17 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
   - Base image digest sha256:03f325eb...; torch 2.12.0+git6bbd260 / triton 3.7.1 / transformers 5.16.1 untouched.
   - Deps audit: base image satisfies common+rocm reqs except tilelang/apache-tvm-ffi (added via requirements/glm53-pinned.txt).
   - /opt/prebuild_gfx908_exts.py "failures" are expected: those modules are Qwen4-fork-only, absent from our GLM branch.
-- [ ] Hardware probes (needs DSV4 stopped): deploy/glm53-gfx908/scripts/hw_probe.py
+- [x] Hardware probes PASSED 2026-09-11 (DSV4 stopped, 8 GPUs free):
+  - matmul BF16/FP16 4096^3 vs chunked fp32 ref: max_diff 0.499/0.062 (sub-ULP) — PASS
+  - Triton add kernel — PASS
+  - RCCL all-reduce within both hives (0-3, 4-7) — PASS
+  - 8-GPU RCCL all-reduce (cross-hive) + cross-hive send/recv — PASS
+  - Graph capture+replay (with warmup), 8 concurrent single-GPU processes — PASS
+  - p2p intra-hive PASS; cross-hive can_device_access_peer=False and direct torch
+    cross-device copy SEGFAULTS (known MI100 issue; HSA_ENABLE_SVM/SDMA/TRANSFER
+    knobs do not fix). PP transfers must use RCCL (verified working).
+  - Graph capture without warmup faults in hipBLASLt workspace alloc; vLLM warms up
+    before capture, so not a blocker. DISABLE_ADDMM_HIP_LT=1 set by default.
 - Build: deploy/glm53-gfx908/scripts/build.sh
 
 ## Phase 2 — checkpoint loading

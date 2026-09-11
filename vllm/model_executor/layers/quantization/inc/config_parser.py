@@ -176,15 +176,15 @@ class INCConfigParser:
             )
             # The GLM-5.3-Flash MTP draft rebuilds checkpoint layer
             # num_hidden_layers under a shortened root ("model.layers.45."
-            # instead of "model.language_model.layers.45."), which does not
-            # match the block prefix above even though that layer IS
-            # quantized in the checkpoint. Map the draft root back onto the
-            # checkpoint block before the prefix test.
-            if not quantized and ".mtp_block." in layer_name:
-                remapped = re.sub(
-                    r"^model\.layers\.",
-                    f"{self._config.block_name_to_quantize[0]}.",
-                    layer_name,
+            # instead of the target's mapper-rewritten
+            # "language_model.model.layers.45."), which does not match the
+            # block prefix above even though that layer IS quantized in the
+            # checkpoint. Map the draft root back onto the checkpoint block
+            # before the prefix test.
+            if not quantized and layer_name.startswith("model.layers."):
+                remapped = (
+                    self._config.block_name_to_quantize[0]
+                    + layer_name[len("model.layers"):]
                 )
                 quantized = any(
                     remapped.startswith(name)

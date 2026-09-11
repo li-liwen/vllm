@@ -20,11 +20,11 @@ docker run -d --name vllm-glm53f \
   -e ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
   -e VLLM_API_KEY="${VLLM_API_KEY:?set VLLM_API_KEY in env}" \
   -e VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=3600 \
+  -e VLLM_PP_LAYER_PARTITION=12,12,12,9 \
   -p 8006:8000 \
   glm53f:latest serve /model \
   --served-model-name glm5.3-flash-autoround \
   --tensor-parallel-size 2 --pipeline-parallel-size 4 \
-  --pipeline-parallel-size 4 \
   --dtype bfloat16 \
   --max-model-len 1048576 \
   --gpu-memory-utilization 0.93 \

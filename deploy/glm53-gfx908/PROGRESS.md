@@ -99,3 +99,7 @@ Image chain: glm53f-build:fix6 → glm53f:latest (commit-tagged rebuilds pending
 - [x] Streaming bursts: 106/106 multi-token bursts (MTP drafting active), coherent outputs.
 - Boot fixes: INC parser root remap (config_parser.py); diagnosis logs added in
   inc.py/mtp.py/model.py/routed_experts.py (to be cleaned before final image).
+
+### Baseline decode rate (eager, MTP=1, 8K ctx, c=1): ~13 tok/s (40 c/s streaming)
+Far below the 50 tok/s gate as expected for eager mode — Phase 6 (graphs, small-M W4A16 GEMV,
+skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target.

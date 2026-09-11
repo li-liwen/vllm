@@ -255,6 +255,11 @@ if _ON_GFX908:
         "VLLM_ROCM_USE_AITER_TRITON_GEMM": "0",
         # Enable working Triton paths
         "VLLM_ROCM_USE_AITER_TRITON_ROPE": "1",
+        # Unified attention corrupts model state after extended use on gfx908
+        # (degenerate repetition after ~200+ requests through UA decode).
+        # Triton attention is perf-equivalent at c=1 and stable long-term.
+        # Source: btbtyler09/vllm-gfx908@mi100-optimized 2ae323c98 defaults.
+        "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION": "0",
         # RCCL tuning for 4x MI100 XGMI fabric (Stage 5j, 2026-04-25): CAR is
         # broken on gfx908 cudagraphs (CDNA1 IPC pointer staleness on graph
         # replay), so all-reduces fall back to RCCL. Tree algo + LL protocol

@@ -10,6 +10,10 @@ docker run -d --name vllm-glm53f \
   $(for i in $(seq 128 135); do echo --device /dev/dri/renderD$i; done) \
   -v /home/ubuntu/glm-5.3-flash/artifacts/checkpoint-local:/model:ro \
   -e HSA_OVERRIDE_GFX_VERSION=9.0.8 \
+  -e HSA_ENABLE_SVM=0 \
+  -e HSA_NO_SCRATCH_RECLAIM=1 \
+  -e HIP_FORCE_DEV_KERNARG=1 \
+  -e TORCH_BLAS_PREFER_HIPBLASLT=0 \
   -e HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
   -e ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
   -e VLLM_API_KEY="${VLLM_API_KEY:?set VLLM_API_KEY in env}" \

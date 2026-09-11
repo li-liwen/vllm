@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 
 from vllm.config import VllmConfig
+from vllm.logger import init_logger
 from vllm.model_executor.layers.fused_moe import (
     fused_moe_make_expert_params_mapping,
 )
@@ -35,6 +36,8 @@ from .model import (
 )
 from .ops.fused_eh_norm import fused_eh_norm
 
+logger = init_logger(__name__)
+
 
 class Glm5NextMultiTokenPredictorLayer(nn.Module):
     def __init__(self, vllm_config: VllmConfig, prefix: str) -> None:
@@ -42,7 +45,6 @@ class Glm5NextMultiTokenPredictorLayer(nn.Module):
         assert vllm_config.speculative_config is not None
         config = vllm_config.speculative_config.draft_model_config.hf_config
         self.config = config
-        quant_config = vllm_config.quant_config
 
         self.enorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.hnorm = RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
@@ -65,8 +67,12 @@ class Glm5NextMultiTokenPredictorLayer(nn.Module):
             dtype=torch.int32,
             device=current_platform.device_type,
         )
+        # The checkpoint's lm_head is BF16 (the W4A16 quant block covers only
+        # model.language_model.layers); building the draft head unquantized
+        # matches that tensor and avoids routing lm_head through the INT4
+        # machinery.
         self.shared_head = SharedHead(
-            config=config, prefix=prefix, quant_config=quant_config
+            config=config, prefix=prefix, quant_config=None
         )
         # MTP layers sit past the base model's hidden layers; parse the index
         # from the prefix (e.g. "...layers.32") so the decoder builds an MLA
@@ -323,6 +329,30 @@ class Glm5NextMTP(nn.Module, DeepseekV2MixtureOfExperts):
             # prefix to match.
             if name.startswith("model.language_model."):
                 name = name.replace("model.language_model.", "model.", 1)
+            # Under PP>1 the runner's _maybe_share_embeddings/_maybe_share_lm_head
+            # skip target-weight sharing ("loaded separately"), while this loader
+            # used to drop both names as non-spec-layer weights — leaving the
+            # draft's embed_tokens and shared_head.head random-init (drafts were
+            # noise, 0% acceptance). Load them from the checkpoint directly; the
+            # runner's sharing (pp=1) later just rebinds over the same values.
+            if name == "model.embed_tokens.weight":
+                direct_target = "model.embed_tokens.weight"
+            elif name == "lm_head.weight":
+                direct_target = (
+                    f"model.layers.{self.model.mtp_start_layer_idx}"
+                    ".shared_head.head.weight"
+                )
+            else:
+                direct_target = None
+            if direct_target is not None:
+                if direct_target in params_dict:
+                    param = params_dict[direct_target]
+                    weight_loader = getattr(
+                        param, "weight_loader", default_weight_loader
+                    )
+                    weight_loader(param, loaded_weight)
+                    loaded_params.add(direct_target)
+                continue
             spec_layer = get_spec_layer_idx_from_weight_name(self.config, name)
             if spec_layer is None:
                 continue
@@ -427,4 +457,15 @@ class Glm5NextMTP(nn.Module, DeepseekV2MixtureOfExperts):
                     f"MTP speculative decoding layer {layer_idx} weights "
                     f"missing from checkpoint."
                 )
+        # The per-layer check above passes as soon as ANY weight of a layer
+        # loads, so silently-swallowed params (fp8 helpers returning consumed
+        # without a store) slip through as random init. Log the exact gap.
+        untouched = sorted(set(params_dict) - loaded_params)
+        logger.warning(
+            "MTP draft load: %d/%d params loaded; untouched=%d%s",
+            len(loaded_params & set(params_dict)),
+            len(params_dict),
+            len(untouched),
+            (" first: " + ", ".join(untouched[:25])) if untouched else "",
+        )
         return loaded_params

@@ -207,14 +207,15 @@ class Glm5NextMoE(nn.Module):
         )
 
         swiglu_limit = config.swiglu_limit
+        logger.info(
+            "Glm5NextMoE %s: quant_config=%s shared=%s",
+            prefix,
+            type(quant_config).__name__ if quant_config else None,
+            config.n_shared_experts,
+        )
         if config.n_shared_experts is None:
             self.shared_experts = None
         else:
-            logger.info_once(
-                "Glm5NextMoE %s: quant_config=%s",
-                prefix,
-                type(quant_config).__name__ if quant_config else None,
-            )
             intermediate_size = config.moe_intermediate_size * config.n_shared_experts
 
             self.shared_experts = Glm5NextMLP(

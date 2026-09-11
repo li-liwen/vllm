@@ -1,0 +1,35 @@
+# Build the vLLM wheel from feat/glm53-flash-gfx908 inside the pinned gfx908 runtime,
+# then produce a serving image. Pinned base:
+#   btbtyler09/vllm-rocm-gfx908:v0.28.0rc7.dev-q38fn
+#   sha256:03f325eb9fb40f21482972d30ade52ba1b47e2223dca66c71d1d3a057d0f0a67
+FROM btbtyler09/vllm-rocm-gfx908:v0.28.0rc7.dev-q38fn AS build
+
+# Pin the inherited toolchain: prevent pip/uv from replacing torch/triton/transformers.
+ENV VLLM_TARGET_DEVICE=rocm \
+    PYTORCH_ROCM_ARCH=gfx908 \
+    MAX_JOBS=64 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=0.28.0rc7.dev.glm53.gfx908 \
+    UV_LINK_MODE=copy
+
+# Source is bind-mounted at /src/vllm (read-only); build in a writable copy.
+COPY vllm-src /src/vllm
+WORKDIR /src/vllm
+
+# Rust frontend (image has no rustup; install toolchain from rust-toolchain.toml)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none \
+    && . "$HOME/.cargo/env" && ./build_rust.sh
+
+# Install only the wheel's missing runtime deps; --no-deps keeps torch/triton pinned.
+RUN python3 -m pip install --no-build-isolation --no-deps --no-cache-dir -e . \
+    && python3 -m pip install --no-deps --no-cache-dir -r requirements/glm53-pinned.txt \
+    && python3 -c "import vllm; print('vllm import OK:', vllm.__version__)"
+
+# Compile the gfx908 HIP extensions ahead of graph capture.
+ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext
+RUN python3 /opt/prebuild_gfx908_exts.py || echo "prebuild: some exts failed (expected for modules not yet ported)"
+
+FROM build AS serve
+ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext
+WORKDIR /workspace
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.cli.main"]
+CMD ["serve", "/model"]

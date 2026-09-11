@@ -252,6 +252,12 @@ class Glm5NextMoE(nn.Module):
             router_logits_dtype=self.gate.out_dtype,
             swiglu_limit=swiglu_limit,
         )
+        logger.info_once(
+            "Glm5NextMoE %s experts: quant=%s routed_type=%s",
+            prefix,
+            type(quant_config).__name__ if quant_config else None,
+            type(self.experts).__name__,
+        )
 
     def forward(
         self,

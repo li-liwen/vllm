@@ -19,6 +19,13 @@ WORKDIR /src/vllm
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none \
     && . "$HOME/.cargo/env" && ./build_rust.sh
 
+# The base image ships its own installed vllm (0.27.2-era). Its package dir
+# can leave namespace shadows that break the editable install below, so
+# uninstall it first.
+RUN python3 -m pip uninstall -y vllm >/dev/null 2>&1 || true \
+    && rm -rf /usr/local/lib/python3.12/dist-packages/vllm \
+              /usr/local/lib/python3.12/dist-packages/vllm-*.dist-info
+
 # Install only the wheel's missing runtime deps; --no-deps keeps torch/triton pinned.
 RUN python3 -m pip install --no-build-isolation --no-deps --no-cache-dir -e . \
     && python3 -m pip install --no-deps --no-cache-dir -r requirements/glm53-pinned.txt \

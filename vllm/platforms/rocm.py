@@ -254,8 +254,21 @@ if _ON_GFX908:
         # Disable Triton GEMM (tested: -25% regression from dtype cast)
         "VLLM_ROCM_USE_AITER_TRITON_GEMM": "0",
         # Enable working Triton paths
-        "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION": "1",
         "VLLM_ROCM_USE_AITER_TRITON_ROPE": "1",
+        # RCCL tuning for 4x MI100 XGMI fabric (Stage 5j, 2026-04-25): CAR is
+        # broken on gfx908 cudagraphs (CDNA1 IPC pointer staleness on graph
+        # replay), so all-reduces fall back to RCCL. Tree algo + LL protocol
+        # shave ~0.5 ms/step vs Ring/default for the small per-step
+        # all-reduces decode produces. Source: btbtyler09/vllm-gfx908
+        # @mi100-optimized 2ae323c98.
+        "NCCL_ALGO": "Tree",
+        "NCCL_PROTO": "LL",
+        # ROCm 7.2.4 hipBLASLt grew gfx908 addmm coverage with untuned
+        # heuristics: MTP verify GEMMs pick slow kernels (+15% TPOT on
+        # long-prompt spec decode). rocBLAS fallback restores the pre-7.2.4
+        # behavior. A/B 2026-08-15: LT 15.2-17ms vs rocBLAS 14.7ms TPOT.
+        # Source: btbtyler09/vllm-gfx908@mi100-optimized d2e8687f3.
+        "DISABLE_ADDMM_HIP_LT": "1",
     }
     for _var, _val in _GFX908_DEFAULTS.items():
         if _var not in os.environ:

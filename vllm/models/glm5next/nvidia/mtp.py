@@ -218,6 +218,12 @@ class Glm5NextMTP(nn.Module, DeepseekV2MixtureOfExperts):
         super().__init__()
         self.config = vllm_config.model_config.hf_config
         self.quant_config = vllm_config.quant_config
+        logger.info_once(
+            "Glm5NextMTP init: quant_config=%s model_config.quantization=%s",
+            type(vllm_config.quant_config).__name__
+            if vllm_config.quant_config else None,
+            vllm_config.model_config.quantization,
+        )
         self.model = Glm5NextMultiTokenPredictor(
             vllm_config=vllm_config, prefix=maybe_prefix(prefix, "model")
         )

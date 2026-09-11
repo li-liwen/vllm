@@ -2230,6 +2230,19 @@ class MLACommonMetadataBuilder(AttentionMetadataBuilder[M]):
             # (assuming 192 QK head dim, 128 heads, and fp16)
             64 * 1024,
         )
+        if scheduler_config.enable_chunked_prefill:
+            # With chunked prefill enabled, at most max_num_batched_tokens
+            # are processed per step, so the workspace never needs more than
+            # that many tokens. At 1M context the 64k-token cap above would
+            # reserve multiple GiB per sparse MLA layer (heads * 640 dims at
+            # bf16) and starve the KV cache.
+            chunked_prefill_workspace_size = min(
+                chunked_prefill_workspace_size,
+                max(
+                    scheduler_config.max_num_batched_tokens,
+                    4 * cache_config.block_size,
+                ),
+            )
 
         return align_mla_chunked_context_workspace_size(
             vllm_config,

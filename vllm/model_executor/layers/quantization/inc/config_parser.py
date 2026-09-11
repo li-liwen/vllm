@@ -174,6 +174,22 @@ class INCConfigParser:
                 layer_name.startswith(name)
                 for name in self._config.block_name_to_quantize
             )
+            # The GLM-5.3-Flash MTP draft rebuilds checkpoint layer
+            # num_hidden_layers under a shortened root ("model.layers.45."
+            # instead of "model.language_model.layers.45."), which does not
+            # match the block prefix above even though that layer IS
+            # quantized in the checkpoint. Map the draft root back onto the
+            # checkpoint block before the prefix test.
+            if not quantized and ".mtp_block." in layer_name:
+                remapped = re.sub(
+                    r"^model\.layers\.",
+                    f"{self._config.block_name_to_quantize[0]}.",
+                    layer_name,
+                )
+                quantized = any(
+                    remapped.startswith(name)
+                    for name in self._config.block_name_to_quantize
+                )
 
         if self._config.extra_config and "fusedmoe" in layer.__class__.__name__.lower():
             moe_configs = [

@@ -408,6 +408,17 @@ class Glm5NextMTP(nn.Module, DeepseekV2MixtureOfExperts):
                         continue
                     is_expert_weight = True
                     name_mapped = name.replace(weight_name, param_name)
+                    if name_mapped not in params_dict:
+                        available = [
+                            p
+                            for p in params_dict
+                            if name_mapped.rsplit(".", 1)[0] in p
+                        ]
+                        raise KeyError(
+                            f"{name_mapped} not in draft params; the draft "
+                            "routed experts registered different names. "
+                            f"Available near path: {available[:8]}"
+                        )
                     param = params_dict[name_mapped]
                     weight_loader = typing.cast(
                         Callable[..., bool], param.weight_loader

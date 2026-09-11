@@ -29,7 +29,7 @@ ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext \\
     HF_HUB_OFFLINE=1 \\
     TRANSFORMERS_OFFLINE=1
 WORKDIR /workspace
-ENTRYPOINT ["python3", "-m", "vllm.entrypoints.cli.main"]
+ENTRYPOINT ["/usr/local/bin/vllm"]
 CMD ["serve", "/model"]
 EOF
 docker build -t glm53f:latest -f "$ctx/Dockerfile.serve" "$ctx"

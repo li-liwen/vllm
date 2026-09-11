@@ -69,3 +69,22 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
 - Per rank at 1M: PP0 ≈ 31.3 GiB / 32 (0.7 headroom), PP1 ≈ 29.0 GiB / 32 (3.0 headroom),
   before activation/graph buffers. Tight on PP0 — activation peaks and graph pools may force
   the plan's fallbacks (reduced graphs → seqs 1 → chunk 1024 → TP2xPP4 partition 12,12,12,9).
+
+## Phase 4 MILESTONE — full model boots TP4xPP2 (2026-09-11 19:58 UTC)
+- [x] GLM-5.3-Flash W4A16 AutoRound loads and serves on 8x MI100 with TP4×PP2, 8K context, eager.
+- [x] All 8 workers: Model loading took 21.7 GiB each, ~202 s (indexed loader active, 36 shards).
+- [x] WNA16 MoE backend = TRITON chosen automatically on gfx908 (Marlin rejected).
+- [x] init engine (profile, create kv cache, warmup) took 452 s; Application startup complete.
+- [x] Memory profile at 8K: PP0 weights+non-torch 21.31 GiB, activation peak 1.27 GiB, KV 7.17 GiB;
+      PP1 weights 22.84 GiB, KV 5.73 GiB. All under the 29.75 GiB utilization target.
+- [x] Smoke tests: 17*23=391 correct; Chinese instruction coherent; step-by-step math correct;
+      image understanding correct (red background + green rectangle identified).
+- KV/mamba page alignment handled by main's auto block-size (attention block 1152, mamba padded).
+- Remaining Phase 4 gate: MTP enablement + acceptance (next step).
+
+### Boot fixes during bring-up
+1. extra-config whitelist needed safetensors_use_index (default_loader.py).
+2. index_file NameError in _get_weights_iterator → use SAFE_WEIGHTS_INDEX_NAME.
+3. Base-image stale vllm + pip editable namespace stubs shadow submodule imports → purged in
+   Dockerfile (both before install -e and after).
+Image chain: glm53f-build:fix6 → glm53f:latest (commit-tagged rebuilds pending for reproducibility).

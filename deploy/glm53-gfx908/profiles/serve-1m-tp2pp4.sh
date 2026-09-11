@@ -15,6 +15,7 @@ docker run -d --name vllm-glm53f \
   -e HSA_NO_SCRATCH_RECLAIM=1 \
   -e HIP_FORCE_DEV_KERNARG=1 \
   -e TORCH_BLAS_PREFER_HIPBLASLT=0 \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   -e VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION=0 \
   -e HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
   -e ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 \
@@ -28,7 +29,7 @@ docker run -d --name vllm-glm53f \
   --dtype bfloat16 \
   --max-model-len 1048576 \
   --gpu-memory-utilization 0.93 \
-  --max-num-seqs 4 \
+  --max-num-seqs 1 \
   --max-num-batched-tokens 2048 \
   --block-size 128 \
   --no-enable-prefix-caching \

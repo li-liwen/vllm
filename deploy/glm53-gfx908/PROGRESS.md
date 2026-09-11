@@ -21,7 +21,12 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
 ```
 
 ## Phase 1 — pinned runtime build
-- [ ] Not started. DSV4 may keep running during CPU-only build.
+- [x] Stage1 wheel build complete: glm53f-build:stage1 (46.8 GB) from vllm 0.28.0rc7.dev0+glm53.gfx908.
+  - Base image digest sha256:03f325eb...; torch 2.12.0+git6bbd260 / triton 3.7.1 / transformers 5.16.1 untouched.
+  - Deps audit: base image satisfies common+rocm reqs except tilelang/apache-tvm-ffi (added via requirements/glm53-pinned.txt).
+  - /opt/prebuild_gfx908_exts.py "failures" are expected: those modules are Qwen4-fork-only, absent from our GLM branch.
+- [ ] Hardware probes (needs DSV4 stopped): deploy/glm53-gfx908/scripts/hw_probe.py
+- Build: deploy/glm53-gfx908/scripts/build.sh
 
 ## Phase 2 — checkpoint loading
 - [ ] Not started.

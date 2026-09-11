@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the glm53f wheel + serving images from the feature branch.
 # Usage: ./build.sh [commit]   (default: HEAD of feat/glm53-flash-gfx908)
+# NOTE: the build context /tmp/glm53-build is wiped each run; keep build logs outside it.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)

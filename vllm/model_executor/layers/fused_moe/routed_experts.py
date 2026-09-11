@@ -193,6 +193,12 @@ class RoutedExperts(PluggableLayer):
         of the proper type.
         """
         quant_method = None
+        from vllm.logger import init_logger as _il
+        _il(__name__).info(
+            "RoutedExperts._get_quant_method prefix=%s quant_config=%s",
+            prefix,
+            type(quant_config).__name__ if quant_config else None,
+        )
         if quant_config is not None:
             quant_method = resolve_quant_method(quant_config, self, prefix)
         if quant_method is None:

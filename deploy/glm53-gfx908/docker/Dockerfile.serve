@@ -1,0 +1,15 @@
+# Serving image: stage1 build + deployment metadata labels.
+# Built by build.sh after stage1 (which contains the wheel + compiled extensions).
+FROM glm53f-build:stage1 AS serve
+
+LABEL org.opencontainers.image.source="li-liwen/vllm feat/glm53-flash-gfx908" \
+      org.opencontainers.image.description="GLM-5.3-Flash W4A16 AutoRound on gfx908 (MI100)"
+
+ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext \
+    HF_HOME=/huggingface \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1
+
+WORKDIR /workspace
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.cli.main"]
+CMD ["serve", "/model"]

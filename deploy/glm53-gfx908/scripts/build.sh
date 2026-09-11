@@ -20,16 +20,17 @@ docker build -f "$ctx/vllm-src/deploy/glm53-gfx908/docker/Dockerfile.glm53" \
     -t "$tag_source" --target build "$ctx"
 
 echo "== serve image"
-docker build -t glm53f:latest - "$tag_source" "$commit" <<'EOF'
-FROM $0 AS serve
-LABEL org.opencontainers.image.source="li-liwen/vllm feat/glm53-flash-gfx908" \
-      org.opencontainers.image.revision="$1"
-ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext \
-    HF_HOME=/huggingface \
-    HF_HUB_OFFLINE=1 \
+cat > "$ctx/Dockerfile.serve" <<EOF
+FROM $tag_source AS serve
+LABEL org.opencontainers.image.source="li-liwen/vllm feat/glm53-flash-gfx908" \\
+      org.opencontainers.image.revision="$commit"
+ENV VLLM_GFX908_HIP_BUILD_DIR=/opt/vllm-gfx908-ext \\
+    HF_HOME=/huggingface \\
+    HF_HUB_OFFLINE=1 \\
     TRANSFORMERS_OFFLINE=1
 WORKDIR /workspace
 ENTRYPOINT ["python3", "-m", "vllm.entrypoints.cli.main"]
 CMD ["serve", "/model"]
 EOF
+docker build -t glm53f:latest -f "$ctx/Dockerfile.serve" "$ctx"
 echo "built: $tag_source and glm53f:latest"

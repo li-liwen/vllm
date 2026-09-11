@@ -29,6 +29,8 @@ docker run -d --name vllm-glm53f \
   --max-num-batched-tokens 2048 \
   --enforce-eager \
   --speculative-config '{"method":"mtp","num_speculative_tokens":1}' \
+  --enable-auto-tool-choice --tool-call-parser glm47 \
+  --reasoning-parser glm45 \
   --load-format safetensors \
   --model-loader-extra-config '{"safetensors_use_index": true}' \
   --trust-remote-code

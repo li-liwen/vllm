@@ -86,6 +86,7 @@ class DefaultModelLoader(BaseModelLoader):
             "enable_multithread_load",
             "num_threads",
             "enable_weights_track",
+            "safetensors_use_index",
         }
         unexpected_keys = set(extra_config.keys()) - allowed_keys
 

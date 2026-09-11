@@ -334,12 +334,6 @@ class INCConfig(QuantizationConfig):
                     return None
 
         layer_config = self.config_parser.resolve(layer, prefix)
-        logger.info_once(
-            "INC get_quant_method prefix=%r quantized=%s bits=%s",
-            prefix,
-            layer_config.quantized,
-            layer_config.bits,
-        )
         if not layer_config.quantized:
             if isinstance(layer, (LinearBase, ParallelLMHead)):
                 return UnquantizedLinearMethod()

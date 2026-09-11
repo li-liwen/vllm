@@ -63,3 +63,9 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
   HIP_FORCE_DEV_KERNARG=1, TORCH_BLAS_PREFER_HIPBLASLT=0).
 - Build fix: base image's stale vllm (0.27.2) namespace-shadows the editable install — purged in
   Dockerfile (vllm.entrypoints.cli ModuleNotFoundError root cause).
+
+### 1M memory estimate (TP4xPP2, refined with real tensor shapes)
+- Server weights ~180 GiB (attn 17.9 + MoE 152 + draft 3.75 + embed/head 2.4 + vision ~1.9).
+- Per rank at 1M: PP0 ≈ 31.3 GiB / 32 (0.7 headroom), PP1 ≈ 29.0 GiB / 32 (3.0 headroom),
+  before activation/graph buffers. Tight on PP0 — activation peaks and graph pools may force
+  the plan's fallbacks (reduced graphs → seqs 1 → chunk 1024 → TP2xPP4 partition 12,12,12,9).

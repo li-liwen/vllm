@@ -103,3 +103,10 @@ Image chain: glm53f-build:fix6 → glm53f:latest (commit-tagged rebuilds pending
 ### Baseline decode rate (eager, MTP=1, 8K ctx, c=1): ~13 tok/s (40 c/s streaming)
 Far below the 50 tok/s gate as expected for eager mode — Phase 6 (graphs, small-M W4A16 GEMV,
 skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target.
+
+### 1M KV feasibility (measured from 8K boot)
+- KV/token/rank measured: PP0 ~6.9 KiB (6 sparse layers), PP1 ~4.4 KiB — matches the analytic model.
+- TP4xPP2 @1M single request: PP0 needs ~35 GiB KV/rank — IMPOSSIBLE (32 GiB total). Deficit ~28 GiB.
+- TP2xPP4 (partition 12,12,12,9): ~3 sparse layers/rank -> ~3.5 GiB KV/rank @1M — fits. Weights/rank
+  unchanged (1/8 sharded). Activations double per rank (TP2). This is the production candidate
+  for 1M per the plan's fallback #4.

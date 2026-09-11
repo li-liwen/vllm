@@ -288,11 +288,13 @@ class DefaultModelLoader(BaseModelLoader):
                 elif extra_config.get("safetensors_use_index"):
                     # Index-respecting loading for checkpoints whose shards
                     # hold stale duplicate tensors under names the index maps
-                    # to a different (repaired) file.
+                    # to a different (repaired) file. (The mistral format's
+                    # consolidated index is not supported here; that format
+                    # has no intra-shard duplicates.)
                     weights_iterator = indexed_safetensors_weights_iterator(
                         hf_weights_files,
                         hf_folder,
-                        index_file,
+                        SAFE_WEIGHTS_INDEX_NAME,
                         self.load_config.use_tqdm_on_load,
                     )
                 else:

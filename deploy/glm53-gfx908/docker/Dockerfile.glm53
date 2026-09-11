@@ -27,7 +27,12 @@ RUN python3 -m pip uninstall -y vllm >/dev/null 2>&1 || true \
               /usr/local/lib/python3.12/dist-packages/vllm-*.dist-info
 
 # Install only the wheel's missing runtime deps; --no-deps keeps torch/triton pinned.
+# The editable install itself emits empty namespace stubs under
+# dist-packages/vllm/ (pip namespace-package handling of vllm's implicit
+# subpackages); they shadow the editable finder for submodule imports, so
+# purge them afterwards.
 RUN python3 -m pip install --no-build-isolation --no-deps --no-cache-dir -e . \
+    && rm -rf /usr/local/lib/python3.12/dist-packages/vllm \
     && python3 -m pip install --no-deps --no-cache-dir -r requirements/glm53-pinned.txt \
     && python3 -c "import vllm; print('vllm import OK:', vllm.__version__)"
 

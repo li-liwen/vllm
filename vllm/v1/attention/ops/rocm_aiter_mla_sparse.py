@@ -22,8 +22,9 @@ from vllm.v1.attention.ops.common import pack_seq_triton, unpack_seq_triton
 from vllm.v1.worker.workspace import current_workspace_manager
 
 if current_platform.is_rocm():
-    from vllm.platforms.rocm import _ON_GFX942, _ON_GFX950
+    from vllm.platforms.rocm import _ON_GFX908, _ON_GFX942, _ON_GFX950
 else:
+    _ON_GFX908 = False
     _ON_GFX942 = False
     _ON_GFX950 = False
 
@@ -656,6 +657,15 @@ def rocm_fp8_paged_mqa_logits(
         aiter_paged_mqa_logits_module = paged_mqa_logits_module()
 
     if aiter_paged_mqa_logits_module is not None:
+        if not _ON_GFX942 and not _ON_GFX950 and _ON_GFX908:
+            # gfx908 (MI100): aiter's Triton MQA-logits kernels issue tl.dot
+            # on fp8e4nv, which gfx908 Triton does not support
+            # ('Unsupported lhs dtype fp8e4nv'). Use the dequantizing torch
+            # fallback; a gfx908-specific kernel is Phase 6 work.
+            return fp8_paged_mqa_logits_torch(
+                q_fp8, kv_cache_fp8, weights, context_lens, block_tables,
+                max_model_len,
+            )
         if _ON_GFX942 or _ON_GFX950:
             deepgemm_fp8_paged_mqa_logits = (
                 aiter_paged_mqa_logits_module.deepgemm_fp8_paged_mqa_logits
@@ -812,7 +822,9 @@ def rocm_fp8_mqa_logits(
     if rocm_aiter_ops.is_enabled() or rocm_aiter_ops.is_rdna_aiter_enabled():
         aiter_mqa_logits_module = mqa_logits_module()
 
-    if aiter_mqa_logits_module is not None:
+    if aiter_mqa_logits_module is not None and not _ON_GFX908:
+        # gfx908: aiter's Triton MQA-logits kernel issues tl.dot on fp8e4nv,
+        # unsupported on MI100; fall through to the torch fallback.
         fp8_mqa_logits = aiter_mqa_logits_module.fp8_mqa_logits
         return fp8_mqa_logits(q, k_fp8, scale, weights, cu_seqlen_ks, cu_seqlen_ke)
     else:

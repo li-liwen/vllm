@@ -77,11 +77,24 @@ class INCWNA16LinearScheme(INCLinearScheme):
                 )
             )
 
-        raise NotImplementedError(
-            f"INC quantization with bits={self.layer_config.bits}, "
-            f"sym={self.layer_config.sym} is not supported. "
-            "Only 4-bit and 8-bit symmetric quantization is supported "
-            "with Marlin kernels."
+        # Marlin is unavailable (e.g. gfx908/MI100): AutoGPTQLinearMethod
+        # selects its backend through choose_mp_linear_kernel, which routes
+        # dense INT4 to TritonW4A16LinearKernel on ROCm. The backend hint is
+        # honored by only reaching here when "auto"/marlin selection failed.
+        from vllm.model_executor.layers.quantization.auto_gptq import (
+            AutoGPTQLinearMethod,
+        )
+
+        return AutoGPTQLinearMethod(
+            AutoGPTQConfig(
+                weight_bits=self.layer_config.bits,
+                group_size=self.layer_config.group_size,
+                desc_act=False,
+                is_sym=self.layer_config.sym,
+                lm_head_quantized=False,
+                dynamic={},
+                full_config={},
+            )
         )
 
     def _build_awq_method(self):

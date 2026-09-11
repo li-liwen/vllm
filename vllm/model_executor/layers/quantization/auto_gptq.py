@@ -314,12 +314,6 @@ class AutoGPTQLinearMethod(LinearMethodBase):
         self.input_dtype = None
         self.quant_type = self.quant_config.quant_type
 
-        # Verify supported on platform.
-        verify_marlin_supported(
-            quant_type=self.quant_config.quant_type,
-            group_size=self.quant_config.group_size,
-        )
-
     def create_weights(
         self,
         layer: torch.nn.Module,
@@ -348,6 +342,17 @@ class AutoGPTQLinearMethod(LinearMethodBase):
         )
 
         kernel_type = choose_mp_linear_kernel(mp_linear_kernel_config)
+
+        # Marlin kernels verify platform support themselves through the
+        # capability check in choose_mp_linear_kernel; only verify
+        # explicitly when Marlin was actually selected. This lets
+        # non-Marlin-capable platforms (e.g. gfx908/MI100) reach
+        # TritonW4A16LinearKernel through the same method.
+        if kernel_type.__name__ == "MarlinLinearKernel":
+            verify_marlin_supported(
+                quant_type=self.quant_config.quant_type,
+                group_size=self.quant_config.group_size,
+            )
 
         if kernel_type.__name__ not in self._kernel_backends_being_used:
             logger.info("Using %s for AutoGPTQLinearMethod", kernel_type.__name__)

@@ -26,6 +26,7 @@ from vllm.model_executor.model_loader.weight_utils import (
     filter_duplicate_safetensors_files,
     filter_files_not_needed_for_inference,
     get_quant_config,
+    indexed_safetensors_weights_iterator,
     instanttensor_weights_iterator,
     maybe_download_from_modelscope,
     multi_thread_pt_weights_iterator,
@@ -282,6 +283,16 @@ class DefaultModelLoader(BaseModelLoader):
                         max_workers=extra_config.get(
                             "num_threads", self.DEFAULT_NUM_THREADS
                         ),
+                    )
+                elif extra_config.get("safetensors_use_index"):
+                    # Index-respecting loading for checkpoints whose shards
+                    # hold stale duplicate tensors under names the index maps
+                    # to a different (repaired) file.
+                    weights_iterator = indexed_safetensors_weights_iterator(
+                        hf_weights_files,
+                        hf_folder,
+                        index_file,
+                        self.load_config.use_tqdm_on_load,
                     )
                 else:
                     weights_iterator = safetensors_weights_iterator(

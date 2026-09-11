@@ -1000,6 +1000,72 @@ def safetensors_weights_iterator(
                     yield name, param
 
 
+def indexed_safetensors_weights_iterator(
+    hf_weights_files: list[str],
+    hf_folder: str,
+    index_file: str,
+    use_tqdm_on_load: bool,
+) -> Generator[tuple[str, torch.Tensor], None, None]:
+    """Iterate over weights strictly following the safetensors index.
+
+    Some checkpoints (e.g. AutoRound/GPTQ repairs of GLM-5.3-Flash) contain
+    stale duplicate tensors INSIDE regular shards while the index maps each
+    tensor to the file holding its repaired copy. The file-level
+    ``filter_duplicate_safetensors_files`` cannot fix that: the same file
+    holds both a stale and an authoritative tensor under the same name.
+
+    When enabled (``--model-loader-extra-config
+    '{"safetensors_use_index": true}'`` with ``--load-format safetensors``):
+
+    - each tensor is yielded exactly once, from the file named by its
+      ``weight_map`` entry;
+    - unindexed extra tensors are ignored;
+    - a mapped file or mapped tensor missing from disk raises.
+    """
+    index_file_name = os.path.join(hf_folder, index_file)
+    if not os.path.isfile(index_file_name):
+        raise FileNotFoundError(
+            f"safetensors_use_index is enabled but no index at {index_file_name}"
+        )
+    with open(index_file_name) as f:
+        weight_map: dict[str, str] = json.load(f)["weight_map"]
+
+    by_file: dict[str, list[str]] = {}
+    for name, fname in weight_map.items():
+        path = os.path.join(hf_folder, fname)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"index maps '{name}' to missing file {fname}"
+            )
+        by_file.setdefault(fname, []).append(name)
+
+    unindexed = [os.path.basename(f) for f in hf_weights_files if os.path.basename(f) not in by_file]
+    if unindexed:
+        logger.info_once(
+            "safetensors_use_index: %d file(s) not referenced by the index "
+            "are ignored: %s",
+            len(unindexed),
+            ", ".join(sorted(unindexed)[:8]),
+        )
+
+    for st_file in tqdm(
+        [os.path.join(hf_folder, f) for f in sorted(by_file, key=_natural_sort_key)],
+        desc="Loading safetensors checkpoint shards (indexed)",
+        disable=not enable_tqdm(use_tqdm_on_load),
+        bar_format=_BAR_FORMAT,
+    ):
+        fname = os.path.basename(st_file)
+        with safe_open(st_file, framework="pt") as f:
+            file_keys = set(f.keys())  # noqa: SIM118
+            for name in sorted(by_file[fname], key=_natural_sort_key):
+                if name not in file_keys:
+                    raise KeyError(
+                        f"index maps '{name}' to {fname} but the tensor is "
+                        "absent from the file"
+                    )
+                yield name, f.get_tensor(name)
+
+
 def multi_thread_safetensors_weights_iterator(
     hf_weights_files: list[str],
     use_tqdm_on_load: bool,

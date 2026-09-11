@@ -50,3 +50,16 @@ rsync -an /mnt/flash-inference/models/GLM-5.3-Flash-W4A16-AutoRound/ /home/ubunt
 - [x] INCConfig parses real quantization_config: bits 4, gs 128, sym, packing auto_round:auto_gptq;
       per-layer resolution: experts 4-bit, shared/conv1d/router/down_proj 16-bit.
 - Remaining for Phase 2 gate: full model load on GPU (deferred to Phase 4 boot at 8K).
+
+## Phase 3/4 prep findings (2026-09-11, CPU-side)
+- KDA: main already dispatches ROCm → amd/ops/third_party/kda triton kernels.
+- mHC: aiter mhc ops are torch-composed (arch-safe on gfx908); tilelang MHC enabled on non-gfx942
+  ROCm; falls back to torch kernels otherwise.
+- Indexer: ROCm routes to rocm_fp8_mqa_logits / rocm_fp8_paged_mqa_logits (aiter triton on
+  gfx908 — no gluon special-casing — or torch fallback). 2D per-row seq_lens supported in both.
+- MTP: glm5_next → Glm5NextMTPModel registration intact; draft parallel config uses pp=1
+  (plan patch 0004 not needed). Draft embed/head loading ported (0005), shared head unquantized (0017).
+- 8K boot profile now carries DSV4 stability envs (HSA_ENABLE_SVM=0, HSA_NO_SCRATCH_RECLAIM=1,
+  HIP_FORCE_DEV_KERNARG=1, TORCH_BLAS_PREFER_HIPBLASLT=0).
+- Build fix: base image's stale vllm (0.27.2) namespace-shadows the editable install — purged in
+  Dockerfile (vllm.entrypoints.cli ModuleNotFoundError root cause).

@@ -27,9 +27,9 @@ docker run -d --name vllm-glm53f \
   --tensor-parallel-size 2 --pipeline-parallel-size 4 \
   --dtype bfloat16 \
   --max-model-len 1048576 \
-  --gpu-memory-utilization 0.93 \
+  --gpu-memory-utilization 0.95 \
   --max-num-seqs 1 \
-  --max-num-batched-tokens 2048 \
+  --max-num-batched-tokens 1024 \
   --block-size 128 \
   --no-enable-prefix-caching \
   --speculative-config '{"method":"mtp","num_speculative_tokens":1}' \

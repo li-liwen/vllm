@@ -138,3 +138,16 @@ skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target
 - Bench with path active: pooled 38.8 (vs 39.5 stock) — neutral at depth 2. The path logs
   activation at capture (x (4, 4096)).
 - Note: *_hip* / *.hip gitignore rules exclude the files; force-added (as in the reference repo).
+
+## Session state (2026-09-12 04:1x UTC)
+- SERVING: vllm-glm53f on port 8006, depth-2 MTP + HIP graphs, 8K ctx, TP4xPP2, tool/reasoning
+  parsers on. Image glm53f:latest FROM glm53f-build:fix27 (= e68d9cbf5111 + gfx908 logits
+  fallback + chunked-workspace cap + W4A16 GEMV MoE with split-divisibility fix).
+- c=1 C1 benchmark (3 families, median): code 46.6, math 19.1, prose 38.8, pooled 38.8 tok/s.
+- Next steps (in order):
+  1. Phase 6: dense W4A16 GEMV (q_b/kv_b/o_proj at M<=8) + skinny BF16 dense path.
+  2. Investigate math-family MTP acceptance (19 tok/s — the pooled-median blocker).
+  3. Depth-3 HSA fault root-cause (profiles/boot-8k-mtp-graphs-d3.sh reproduces).
+  4. Phase 5 completion: FP8 MLA-cache fallback for 1M (TP2xPP4 BF16 caps at ~526k).
+  5. Long-context acceptance + soak per plan section 4.
+- Rollback: docker start vllm-dsv4 (DSV4 preserved, stopped).

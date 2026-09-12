@@ -546,6 +546,13 @@ def fp8_paged_mqa_logits_torch(
             logits[i, :seq_len] = score[:seq_len]
         return logits
 
+    if _ON_GFX908:
+        # gfx908: vectorized fallback (no host syncs, no per-page python
+        # loop). Gather the full visible KV per request, dequantize to BF16,
+        # and compute the ReLU-weighted MQA logits in one batched matmul.
+        return _fp8_paged_mqa_logits_gfx908_torch(
+            q, kv_cache, weights, context_lens, block_tables, max_model_len
+        )
     kv_cache, scale = kv_cache[..., :dim], kv_cache[..., dim:]
     scale = scale.contiguous().view(torch.float)
     q = q.float()
@@ -597,6 +604,80 @@ def fp8_paged_mqa_logits_torch(
                 block_rk * block_size : (block_rk + 1) * block_size,
             ] = torch.where(k_offsets[None, :] <= q_offsets[:, None], s, float("-inf"))
     return logits
+
+
+
+def _fp8_paged_mqa_logits_gfx908_torch(
+    q: torch.Tensor,
+    kv_cache: torch.Tensor,
+    weights: torch.Tensor,
+    context_lens: torch.Tensor,
+    block_tables: torch.Tensor,
+    max_model_len: int,
+) -> torch.Tensor:
+    from vllm.utils.math_utils import cdiv
+
+    """Vectorized FP8 paged MQA-logits for gfx908 (MI100).
+
+    aiter's Triton kernels need fp8 tl.dot (unsupported on gfx908) and the
+    reference torch fallback does per-page python loops with host syncs,
+    which are illegal under graph capture and O(pages) at 1M context.
+
+    Layout notes: q is [B, next_n, H, D] fp8; kv_cache is
+    [num_blocks, block_size, 1, D+4] uint8 (fp8 K bytes then fp32 scale).
+    Row (i, j) of the output attends [0, ctx[i, j]).
+    """
+    fp8_dtype = current_platform.fp8_dtype()
+    batch_size, next_n, heads, dim = q.shape
+    block_size = kv_cache.shape[1]
+    k_bytes = kv_cache[..., :dim].contiguous().view(fp8_dtype)
+    k_scale = kv_cache[..., dim:].contiguous().view(torch.float32)
+    num_blocks = kv_cache.shape[0]
+
+    # Per-row context bounds, [B*next_n].
+    ctx = context_lens.to(device=q.device, dtype=torch.int32)
+    if ctx.dim() == 1:
+        ctx = ctx.unsqueeze(-1).expand(-1, next_n)
+    elif ctx.shape[1] == 1:
+        ctx = ctx.expand(-1, next_n)
+    ctx_rows = ctx.reshape(-1)
+
+    # Gather visible KV for the whole batch: [B, max_pages, block_size, dim].
+    max_ctx = int(ctx_rows.max().item()) if ctx_rows.numel() else 0
+    max_pages = min(cdiv(max_ctx, block_size), block_tables.shape[1])
+    pages = block_tables[:, :max_pages].clamp(max=num_blocks - 1)
+    k = k_bytes[pages]                      # [B, max_pages, bs, dim] fp8
+    ks = k_scale[pages]                     # [B, max_pages, bs, 1]
+    k = (
+        k.to(torch.bfloat16).view(batch_size, max_pages, block_size, dim)
+    )
+
+    # Dequantize to bf16 with the fp32 scale folded in.
+    k = (k.float() * ks).to(torch.bfloat16)  # [B, P, bs, dim]
+
+    qf = q.to(torch.bfloat16)                # [B, next_n, H, dim]
+    # scores[b, j, p, t] = sum_d q[b, j, :, d] * k[b, p, t, d]
+    scores = torch.einsum(
+        "bjhd,bptd->bjpt", qf, k, dtype=torch.float32
+    ) * ks.squeeze(-1).unsqueeze(1)
+    scores = torch.relu(scores)
+    scores = scores * weights.reshape(batch_size, next_n, heads).transpose(1, 2).unsqueeze(2)
+    row_logits = scores.sum(dim=2)          # [B, next_n, P*bs]
+
+    # Causal mask per row and tail masking beyond each block's visibility.
+    t_offsets = torch.arange(max_pages * block_size, device=q.device)
+    visible = t_offsets[None, None, :] < ctx_rows.reshape(batch_size, next_n, 1)
+    row_logits = torch.where(visible, row_logits, float("-inf"))
+
+    out = torch.full(
+        [batch_size * next_n, max_model_len],
+        float("-inf"),
+        device=q.device,
+        dtype=torch.float32,
+    )
+    copy_len = min(max_pages * block_size, max_model_len)
+    out[:, :copy_len] = row_logits.reshape(-1, max_pages * block_size)[:, :copy_len]
+    return out
 
 
 @functools.lru_cache

@@ -131,3 +131,10 @@ skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target
   profiles/boot-8k-mtp-graphs-d3.sh + any chat request. Suspect a kpool/MTP-shape kernel at
   depth-3 shapes; needs the Phase 3 focused tests before retrying.
 - Working production depth for now: 2.
+
+### W4A16 GEMV MoE (port of cfac8d0d9) — active, numerics verified, perf neutral
+- Numerics: abs diff 0.007 vs absmax 2.02 (bf16 level) vs dequant reference.
+- Split-count fix required for GLM K=4096 (k_per_split % 8).
+- Bench with path active: pooled 38.8 (vs 39.5 stock) — neutral at depth 2. The path logs
+  activation at capture (x (4, 4096)).
+- Note: *_hip* / *.hip gitignore rules exclude the files; force-added (as in the reference repo).

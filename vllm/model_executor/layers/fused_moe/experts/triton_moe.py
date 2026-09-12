@@ -298,16 +298,6 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
 
         if global_num_experts == -1:
             global_num_experts = E
-        if _gfx908_moe_hip_applies(self, hidden_states, num_tokens, activation, expert_map):
-            from vllm.model_executor.layers.fused_moe.gfx908_moe_hip import gfx908_moe_hip
-
-            gfx908_moe_hip(
-                output, hidden_states, w1, w2, self.w1_scale, self.w2_scale,
-                topk_weights, topk_ids,
-                self.block_shape[1] if self.block_shape else K,
-                not apply_router_weight_on_input,
-            )
-            return
 
         config = try_get_optimal_moe_config(
             w1.size(),
@@ -720,6 +710,17 @@ class TritonWNA16Experts(TritonExperts):
 
         if global_num_experts == -1:
             global_num_experts = E
+
+        if _gfx908_moe_hip_applies(self, hidden_states, num_tokens, activation, expert_map):
+            from vllm.model_executor.layers.fused_moe.gfx908_moe_hip import gfx908_moe_hip
+
+            gfx908_moe_hip(
+                output, hidden_states, w1, w2, self.w1_scale, self.w2_scale,
+                topk_weights, topk_ids,
+                self.block_shape[1] if self.block_shape else K,
+                not apply_router_weight_on_input,
+            )
+            return
 
         config = try_get_optimal_moe_config(
             w1.size(),

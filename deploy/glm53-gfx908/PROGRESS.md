@@ -110,3 +110,15 @@ skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target
 - TP2xPP4 (partition 12,12,12,9): ~3 sparse layers/rank -> ~3.5 GiB KV/rank @1M — fits. Weights/rank
   unchanged (1/8 sharded). Activations double per rank (TP2). This is the production candidate
   for 1M per the plan's fallback #4.
+
+## Phase 4/6 progress — HIP graphs + MTP (2026-09-12 02:0x)
+- [x] 8K MTP boot WITH HIP graphs (no enforce-eager): Application startup complete; capture
+      succeeds on all 8 workers (graph pool accounted in memory profiling).
+- [x] Decode rate at c=1: ~31 tok/s (100 chars/s streaming) vs ~13 eager — 2.4x from graphs.
+      Still short of the 50 tok/s gate; remaining levers: small-M W4A16 GEMV, skinny BF16,
+      split-KV sparse decode, MTP depth sweep (Phase 6).
+- [x] Reasoning parser (glm45) verified: reasoning/content split works; answers correct.
+- [x] Tool calling: model emits native get_weather tool call; glm47 parser active in profile.
+- 1M context on TP2xPP4 BF16-KV: tightest rank 1.62 GiB KV vs 3.16 needed at util 0.97 ->
+  ~526k tokens max. Next: plan fallback #5 (explicit software FP8 MLA cache) or squeeze
+  replication. TP4xPP2 is impossible at 1M (measured 35 GiB/rank requirement).

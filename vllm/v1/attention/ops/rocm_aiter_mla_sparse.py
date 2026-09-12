@@ -509,6 +509,10 @@ def fp8_paged_mqa_logits_torch(
 
     fp8_dtype = current_platform.fp8_dtype()
     batch_size, next_n, _, dim = q.size()
+    if _ON_GFX908:
+        return _fp8_paged_mqa_logits_gfx908_torch(
+            q, kv_cache, weights, context_lens, block_tables, max_model_len
+        )
     if next_n == 1:
         block_size = kv_cache.shape[1]
         logits = torch.full(

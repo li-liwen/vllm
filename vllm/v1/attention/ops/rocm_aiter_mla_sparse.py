@@ -682,7 +682,10 @@ def _fp8_paged_mqa_logits_gfx908_torch(
         dtype=torch.float32,
     )
     copy_len = min(max_pages * block_size, max_model_len)
-    out[:, :copy_len] = row_logits.reshape(-1, max_pages * block_size)[:, :copy_len]
+    if copy_len > 0:
+        out[:, :copy_len] = row_logits.reshape(
+            -1, max_pages * block_size
+        )[:, :copy_len]
     return out
 
 

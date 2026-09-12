@@ -647,33 +647,43 @@ def _fp8_paged_mqa_logits_gfx908_torch(
     ctx_rows = ctx.reshape(-1)
 
     # Gather visible KV for the whole batch: [B, max_pages, block_size, dim].
-    max_ctx = int(ctx_rows.max().item()) if ctx_rows.numel() else 0
-    max_pages = min(cdiv(max_ctx, block_size), block_tables.shape[1])
-    pages = block_tables[:, :max_pages].clamp(max=num_blocks - 1)
-    k = k_bytes[pages]                      # [B, max_pages, bs, dim] fp8
-    ks = k_scale[pages]                     # [B, max_pages, bs]
-
-    # Dequantize to bf16 with the fp32 scale folded in.
-    k = (k.float() * ks.unsqueeze(-1)).to(torch.bfloat16)  # [B, P, bs, dim]
-
+    # No host sync: use the block-table width as the page bound (the profile
+    # and capture paths pass a table sized for max_model_len; real pages
+    # beyond a row's context are masked below).
+    max_pages = min(block_tables.shape[1], cdiv(max_model_len, block_size))
+    # Chunk over pages to bound the [B, H, next_n, chunk, T] scores tensor.
+    # The chunk count derives from max_model_len (static), so the loop is
+    # graph-capture safe; chunks beyond a row's context are masked out.
+    chunk_pages = max(1, 2048 // block_size)
     qf = q.to(torch.bfloat16)                # [B, next_n, H, dim]
-    # per-head scores[b, h, j, p, t] = sum_d q[b, j, h, d] * k[b, p, t, d]
-    scores = torch.einsum("bjhd,bptd->bhjpt", qf, k).float()
-    scores = scores * ks.unsqueeze(1).unsqueeze(2)
-    scores = torch.relu(scores)
-    # scores [B, H, next_n, P, T]; weights [B, next_n, H]
-    # weighted sum over heads: logits[b, j, p, t] = sum_h scores[b, h, j, p, t] * w[b, j, h]
-    row_logits = torch.einsum(
-        "bhjpt,bjh->bjpt", scores, weights.reshape(batch_size, next_n, heads)
+    w = weights.reshape(batch_size, next_n, heads)
+    out_rows = torch.full(
+        [batch_size * next_n, max_pages * block_size],
+        float("-inf"),
+        device=q.device,
+        dtype=torch.float32,
     )
-
-    # Causal mask per row and tail masking beyond each block's visibility.
+    for p0 in range(0, max_pages, chunk_pages):
+        p1 = min(p0 + chunk_pages, max_pages)
+        pages = block_tables[:, p0:p1].clamp(max=num_blocks - 1)
+        k = k_bytes[pages]                   # [B, C, bs, dim] fp8
+        ks = k_scale[pages]                  # [B, C, bs]
+        k = (k.float() * ks.unsqueeze(-1)).to(torch.bfloat16)
+        # per-head scores[b, h, j, c, t] = sum_d q[b, j, h, d] * k[b, c, t, d]
+        scores = torch.einsum("bjhd,bctd->bhjct", qf, k).float()
+        scores = scores * ks.unsqueeze(1).unsqueeze(2)
+        scores = torch.relu(scores)
+        # weighted sum over heads -> [B, next_n, C, T]
+        row_logits = torch.einsum("bhjct,bjh->bjct", scores, w)
+        n_cols = (p1 - p0) * block_size
+        col0 = p0 * block_size
+        out_rows[:, col0:col0 + n_cols] = row_logits.reshape(
+            batch_size * next_n, n_cols
+        )
+    # Causal mask per row: columns past a row's context are -inf.
     t_offsets = torch.arange(max_pages * block_size, device=q.device)
-    visible = t_offsets[None, None, :] < ctx_rows.reshape(batch_size, next_n, 1)
-    row_logits = row_logits.reshape(
-        batch_size, next_n, max_pages * block_size
-    )
-    row_logits = torch.where(visible, row_logits, float("-inf"))
+    visible = t_offsets[None, :] < ctx_rows[:, None]
+    out_rows = torch.where(visible, out_rows, float("-inf"))
 
     out = torch.full(
         [batch_size * next_n, max_model_len],
@@ -683,9 +693,7 @@ def _fp8_paged_mqa_logits_gfx908_torch(
     )
     copy_len = min(max_pages * block_size, max_model_len)
     if copy_len > 0:
-        out[:, :copy_len] = row_logits.reshape(
-            -1, max_pages * block_size
-        )[:, :copy_len]
+        out[:, :copy_len] = out_rows[:, :copy_len]
     return out
 
 

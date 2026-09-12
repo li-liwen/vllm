@@ -122,3 +122,12 @@ skinny BF16, split-KV sparse decode, MTP depth tuning) is the path to the target
 - 1M context on TP2xPP4 BF16-KV: tightest rank 1.62 GiB KV vs 3.16 needed at util 0.97 ->
   ~526k tokens max. Next: plan fallback #5 (explicit software FP8 MLA cache) or squeeze
   replication. TP4xPP2 is impossible at 1M (measured 35 GiB/rank requirement).
+
+### MTP depth sweep at c=1 (graphs, 8K, TP4xPP2, 2026-09-12)
+- depth 1: code ~32, math ~14, prose ~30 (pooled median ~30)
+- depth 2: code ~45, math ~19, prose ~39.5 (pooled median ~39.5) <- best so far
+- depth 3: BOOTED and served one 200-OK request, then HSA memory-access faults on GPUs 5/6/8
+  killed the engine ("Page not present or supervisor privilege"). Reproduce with
+  profiles/boot-8k-mtp-graphs-d3.sh + any chat request. Suspect a kpool/MTP-shape kernel at
+  depth-3 shapes; needs the Phase 3 focused tests before retrying.
+- Working production depth for now: 2.

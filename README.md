@@ -1,4 +1,12 @@
 <!-- markdownlint-disable MD001 MD041 -->
+
+> **SM80 deployment archive:** This branch preserves the DeepSeek V4.1 Flash
+> Turbo backport and DeepInfer-inspired mHC fusion. Start with
+> [the deployment recipe](deployments/deepseek-v41-sm80/README.md), rather than
+> building the vLLM checkout below. Its hardware scope is CUDA SM80 only;
+> recorded measurements used eight CMP 170HX GPUs. Mainstream development lives
+> on separate branches.
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vllm-project/vllm/main/docs/assets/logos/vllm-logo-text-dark.png">

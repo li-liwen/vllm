@@ -25,6 +25,16 @@
   "model_config_sha256": "8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879",
   "python_files": 2657,
   "overlay_files": 31,
+  "rebuilt_archive_image": "sha256:b4aba2221ebcff3e72ba54876b98fb1d4ce6b03b466d648267d9b29aea506089",
+  "verification": {
+    "python_hashes_matched": 2657,
+    "native_hashes_matched": 19,
+    "manual_starts_by_archive_work": 1,
+    "initial_30_minute_health_checkpoint": "did not pass",
+    "final_production_health": "healthy",
+    "authenticated_model_discovery": 200,
+    "missing_and_invalid_credentials": [401, 401]
+  },
   "runtime_source_mutations": [],
   "qualification_report_sha256": "fa276acb13fc621ff80f0145a1f3f0bf0b27dae0b5a67c0e371effbeb8eed09a",
   "caveat": "Latest multimodal launch settings differ from historical text-only performance qualification. Restart health is recorded separately."

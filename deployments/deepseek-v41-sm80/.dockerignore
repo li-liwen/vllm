@@ -1,0 +1,6 @@
+**
+!Dockerfile
+!install.py
+!entrypoint.py
+!patches/
+!patches/**

@@ -1,0 +1,36 @@
+"""Recognize the documented DSpark case with every aux state on the final stage.
+
+This does not implement generic cross-stage auxiliary-state relay. It permits
+only the checked V4.1 PP2 20/20 layout, retaining the upstream guard elsewhere.
+Draft-token broadcasts remain the runner's existing implementation.
+"""
+
+
+def dspark_aux_states_on_final_stage(inner, method, pp=None):
+    if method != "dspark" or inner is None:
+        return False
+    config = getattr(inner, "config", None)
+    if getattr(config, "model_type", None) not in {"deepseek_v41", "deepseek_v41_text"}:
+        return False
+    if getattr(config, "num_hidden_layers", None) != 40:
+        return False
+    expected = (37, 38, 39)
+    if tuple(getattr(config, "dspark_target_layer_ids", ())) != expected:
+        return False
+    if tuple(getattr(inner, "aux_hidden_state_layers", ())) != expected:
+        return False
+    if pp is None:
+        from vllm.distributed.parallel_state import get_pp_group
+        pp = get_pp_group()
+    if pp.world_size != 2:
+        return False
+    if getattr(inner, "_aux_slot_base_cached", None) != 0:
+        return False
+    if getattr(inner, "_aux_upstream_total_cached", None) != 0:
+        return False
+    stage = (getattr(inner, "start_layer", None), getattr(inner, "end_layer", None))
+    if pp.is_first_rank:
+        return stage == (0, 20) and all(layer > stage[1] for layer in expected)
+    if pp.is_last_rank:
+        return stage == (20, 40) and all(stage[0] < layer <= stage[1] for layer in expected)
+    return False

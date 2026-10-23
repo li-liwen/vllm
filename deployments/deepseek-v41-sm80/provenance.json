@@ -1,0 +1,31 @@
+{
+  "capture_date": "2026-10-23",
+  "scope": "NVIDIA CUDA SM80 only; physical measurements are CMP 170HX",
+  "container_id": "f9954347ee4d940d94fb646565dd532da943c4bbe4b3103d3c3a1800543c2b47",
+  "image_id": "sha256:710434d84732383acc873a092c4b9b287ed9124acf88602455b9f90d6b641628",
+  "original_image_tag": "deepseek-v41-sm80:deepinfer-mhc-20261022",
+  "vendor_version": "0.13.0",
+  "vendor_reported_commit": "ga35076662",
+  "fork_anchor": "5fa7b7b01bba4d4e9cd17a4036113d97d086bb8a",
+  "turbo": {
+    "url": "https://github.com/Tokha233/deepseek-v4.1-flash-a100-turbo",
+    "sha": "fae324ae62ac5cef31b7d38f5d369618e1cae1fa"
+  },
+  "deepinfer": {
+    "url": "https://github.com/deepseek-ai/DeepInfer",
+    "sha": "9bd9cf243fc53ef9afbf8f04d391d989117d6ab9",
+    "consumed": "mHC post/pre producer idea; not the engine"
+  },
+  "resources": {
+    "memory": 506806140928,
+    "memory_swap": 506806140928,
+    "shm": 34359738368
+  },
+  "original_compose_sha256": "338b9cb0d966c173ae4d007dc1f5d52e5cbcd149220c3b1f22c627999c2cdd5c",
+  "model_config_sha256": "8be45ce0476004a3f529fd896115a4a2e800a129ad2d3ec05b16050f52e21879",
+  "python_files": 2657,
+  "overlay_files": 31,
+  "runtime_source_mutations": [],
+  "qualification_report_sha256": "fa276acb13fc621ff80f0145a1f3f0bf0b27dae0b5a67c0e371effbeb8eed09a",
+  "caveat": "Latest multimodal launch settings differ from historical text-only performance qualification. Restart health is recorded separately."
+}

@@ -1,0 +1,11 @@
+"""Honor the existing raw-token contract on later pipeline stages."""
+from vllm.model_executor.models.interfaces import requires_raw_input_tokens
+
+
+def prepare_non_first_pp_inputs(model_inputs, model):
+    # Token-dependent routers still need the already-staged token IDs after
+    # embedding. Other models retain the existing input-ID elision behavior.
+    if not requires_raw_input_tokens(model):
+        model_inputs["input_ids"] = None
+    # Later stages consume the preceding stage's hidden states.
+    model_inputs["inputs_embeds"] = None

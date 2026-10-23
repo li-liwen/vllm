@@ -1,0 +1,18 @@
+SM80 deployment snapshot, 2026-10-23
+
+The payloads retain original vLLM and wtdcode/vllm-backport notices. Turbo
+modifications are consumed from Tokha233/deepseek-v4.1-flash-a100-turbo at
+fae324ae62ac5cef31b7d38f5d369618e1cae1fa; see TURBO-NOTICE and TURBO-LICENSE.
+
+The local mHC producer adapts the post/pre fusion idea from deepseek-ai/DeepInfer
+at 9bd9cf243fc53ef9afbf8f04d391d989117d6ab9, particularly
+deepinfer/model_executor/models/v4_modules/hc.py. See DEEPINFER-LICENSE.
+This is a selective adaptation, not a port of the DeepInfer engine.
+
+Local PP embedding, auxiliary-state, input-transfer and KV-cache adjustments,
+and mHC integration were prepared for the CMP 170HX deployment. This branch
+archives the combined deployment and makes no claim that prerequisite work is
+new. Mainstream contributions are developed on separate branches.
+
+Model weights and credentials are not included. Model and runtime dependency
+licenses apply separately. AI assistance was used to prepare this archive.

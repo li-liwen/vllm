@@ -1,0 +1,40 @@
+"""DSpark PP embedding loading, adapted from parent runbook patch 0005.
+
+The target embedding lives on the first PP stage; the drafter lives on the
+last. Use the embedding's native weight loader so TP2 vocabulary sharding
+and padded rows retain vLLM's semantics.
+"""
+import json
+from pathlib import Path
+
+from safetensors import safe_open
+from vllm.distributed import get_pp_group
+from vllm.logger import init_logger
+from vllm.model_executor.models.utils import PPMissingLayer
+
+logger = init_logger(__name__)
+
+
+def load_pp_embedding_if_needed(target_inner, draft_inner, model_path):
+    if get_pp_group().world_size == 1:
+        return False
+    target_embed = getattr(target_inner, "embed_tokens", None)
+    if not isinstance(target_embed, PPMissingLayer):
+        return False
+    embed = getattr(draft_inner, "embed_tokens", None)
+    if embed is None or getattr(embed, "weight", None) is None:
+        raise RuntimeError("DSpark PP requires a materialized draft embedding")
+    loader = getattr(embed.weight, "weight_loader", None)
+    if not callable(loader):
+        raise RuntimeError("DSpark PP requires the native TP-aware embedding weight loader")
+    root = Path(model_path)
+    weight_map = json.loads((root / "model.safetensors.index.json").read_text())["weight_map"]
+    keys = ("embed.weight", "model.embed_tokens.weight", "model.embed.weight", "embed_tokens.weight")
+    key = next((key for key in keys if key in weight_map), None)
+    if key is None:
+        raise RuntimeError("DSpark PP embedding tensor is absent from the checkpoint index")
+    with safe_open(root / weight_map[key], framework="pt", device="cpu") as checkpoint:
+        weight = checkpoint.get_tensor(key)
+        loader(embed.weight, weight)
+    logger.info("DSpark PP: loaded %s via native TP weight loader into shard %s", key, tuple(embed.weight.shape))
+    return True

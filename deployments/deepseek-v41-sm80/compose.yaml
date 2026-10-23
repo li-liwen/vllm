@@ -1,0 +1,131 @@
+name: deepseek-v41-sm80-snapshot
+services:
+  deepseek:
+    image: deepseek-v41-sm80:deployment-snapshot-20261023
+    pull_policy: never
+    container_name: deepseek-flash
+    init: true
+    runtime: nvidia
+    gpus: all
+    network_mode: bridge
+    ipc: private
+    shm_size: 32g
+    mem_limit: 472g
+    memswap_limit: 472g
+    cap_add:
+    - SYS_NICE
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+    - 8098:8098
+    restart: 'no'
+    stop_grace_period: 120s
+    labels:
+      local.deepseek.checkpoint: DeepSeek-V4.1-Flash-1017
+    volumes:
+    - ${MODEL_PATH:?Set MODEL_PATH}:/models/DeepSeek-V4.1-Flash-1017:ro
+    - ${CACHE_PATH:-./runtime-cache}:/root/.cache
+    - ${CACHE_PATH:-./runtime-cache}:/workspace
+    environment:
+      HF_HUB_OFFLINE: '1'
+      TRANSFORMERS_OFFLINE: '1'
+      HF_DATASETS_OFFLINE: '1'
+      VLLM_NO_USAGE_STATS: '1'
+      DO_NOT_TRACK: '1'
+      VLLM_USE_RUST_FRONTEND: '0'
+      VLLM_ENGINE_READY_TIMEOUT_S: '3600'
+      OMP_NUM_THREADS: '8'
+      NCCL_ALGO: Ring
+      NCCL_PROTO: Simple
+      PYTHONUNBUFFERED: '1'
+      NCCL_DEBUG: INFO
+      VLLM_DSV41_FUSED_PREFILL_INDICES: '1'
+      VLLM_INDEXER_QUERY_SHARD: '1'
+      TRITON_CACHE_DIR: /workspace/compiled-cache/triton
+      TILELANG_CACHE_DIR: /workspace/compiled-cache/tilelang
+      TORCHINDUCTOR_CACHE_DIR: /workspace/compiled-cache/torchinductor
+      VLLM_FUSED_STABLE_MOE_ALIGN: '1'
+      VLLM_AMPERE_DENSE_BF16_MIN_TOKENS: '32'
+      VLLM_SM80_EP8_CUSTOM_AG_RS: '0'
+      VLLM_SM80_CANDIDATE_MQA: '1'
+      VLLM_PP_LAYER_PARTITION: 20,20
+      PYTORCH_CUDA_ALLOC_CONF: backend:native,pinned_max_round_threshold_mb:64
+      VLLM_DSV4_LOGITS_ROW_CHUNK: '64'
+      VLLM_WORKER_MULTIPROC_METHOD: spawn
+      VLLM_DEEPINFER_SM80_MHC: '1'
+    command:
+    - serve
+    - /models/DeepSeek-V4.1-Flash-1017
+    - --served-model-name
+    - deepseek-flash
+    - --host
+    - 0.0.0.0
+    - --port
+    - '8098'
+    - --tensor-parallel-size
+    - '2'
+    - --enable-expert-parallel
+    - --limit-mm-per-prompt
+    - '{"image":50}'
+    - --mm-processor-cache-gb
+    - '0'
+    - --max-model-len
+    - '1048576'
+    - --max-num-seqs
+    - '8'
+    - --max-num-batched-tokens
+    - '16384'
+    - --gpu-memory-utilization
+    - '0.93'
+    - --kv-cache-dtype
+    - fp8_ds_mla
+    - --engram-config
+    - '{"cpu_offload":true}'
+    - --tokenizer-mode
+    - deepseek_v41
+    - --enable-auto-tool-choice
+    - --tool-call-parser
+    - deepseek_v41
+    - --reasoning-parser
+    - deepseek_v41
+    - --enable-prompt-tokens-details
+    - --enable-prefix-caching
+    - --compilation-config
+    - '{"mode": 0, "cudagraph_mode": "FULL_DECODE_ONLY", "cudagraph_capture_sizes":
+      [5, 6, 10, 12, 20, 24, 40, 48], "max_cudagraph_capture_size": 48}'
+    - --speculative-config
+    - '{"method": "dspark", "num_speculative_tokens": 5, "use_local_argmax_reduction":
+      true}'
+    - --data-parallel-size
+    - '2'
+    - --data-parallel-size-local
+    - '2'
+    - --all2all-backend
+    - allgather_reducescatter
+    - --hf-overrides
+    - '{"head_dtype":"float32","vision_max_n_token":8192}'
+    - --shutdown-timeout
+    - '600'
+    - --pipeline-parallel-size
+    - '2'
+    healthcheck:
+      test:
+      - CMD
+      - python3
+      - -c
+      - import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8098/v1/models',headers={'Authorization':'Bearer
+        '+os.environ['VLLM_API_KEY']}); assert urllib.request.urlopen(r,timeout=10).status==200
+      interval: 30s
+      start_interval: 10s
+      timeout: 10s
+      retries: 3
+      start_period: 30m
+    logging:
+      driver: json-file
+      options:
+        max-size: 100m
+        max-file: '3'
+    env_file:
+    - .env

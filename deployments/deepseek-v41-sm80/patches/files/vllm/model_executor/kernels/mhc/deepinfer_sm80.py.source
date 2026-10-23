@@ -1,0 +1,162 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Experimental SM80 mHC fusion inspired by DeepInfer's lazy post/pre path.
+
+This is a standalone research module, never imported by the serving image.
+It preserves V4.1's shifted pre-mix and BF16 residual rounding boundary.
+No GPU has been used to validate this prototype. See README.md before use.
+"""
+
+import os
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def _post_prenorm(
+    X, R, POST, COMB, FN, R_OUT, MUL, SQUARE,
+    TOKENS: tl.constexpr, H: tl.constexpr, BLOCK_H: tl.constexpr,
+    BLOCK_N: tl.constexpr, SPLITS: tl.constexpr,
+):
+    """Post-map and project the rounded residual; split across hidden columns.
+
+    Each tile computes BLOCK_N of the 24 projection outputs. Only the first
+    projection tile writes the residual and squared norm, so stores never race.
+    All arithmetic uses SM80 scalar/vector operations; no FP8/FP4/TMA/PDL.
+    """
+    token, n_tile, h_tile = tl.program_id(0), tl.program_id(1), tl.program_id(2)
+    h = h_tile * BLOCK_H + tl.arange(0, BLOCK_H)
+    n = n_tile * BLOCK_N + tl.arange(0, BLOCK_N)
+    x = tl.load(X + token * H + h, h < H, other=0).to(tl.float32)
+    r0 = tl.load(R + (token * 4 + 0) * H + h, h < H, other=0).to(tl.float32)
+    r1 = tl.load(R + (token * 4 + 1) * H + h, h < H, other=0).to(tl.float32)
+    r2 = tl.load(R + (token * 4 + 2) * H + h, h < H, other=0).to(tl.float32)
+    r3 = tl.load(R + (token * 4 + 3) * H + h, h < H, other=0).to(tl.float32)
+    dots = tl.full((BLOCK_N, BLOCK_H), 0, tl.float32)
+    squares = tl.full((BLOCK_H,), 0, tl.float32)
+    for j in tl.static_range(4):
+        p = tl.load(POST + token * 4 + j)
+        # Match NVCC's contraction of the first two products in native post.
+        value = tl.load(COMB + token * 16 + 0 * 4 + j) * r0
+        value = tl.fma(p, x, value)
+        value = tl.fma(tl.load(COMB + token * 16 + 1 * 4 + j), r1, value)
+        value = tl.fma(tl.load(COMB + token * 16 + 2 * 4 + j), r2, value)
+        value = tl.fma(tl.load(COMB + token * 16 + 3 * 4 + j), r3, value)
+        # The existing path writes BF16 and subsequently reads that tensor.
+        # Keeping this rounding point is essential for V4.1 parity.
+        rounded = value.to(tl.bfloat16, fp_downcast_rounding="rtne")
+        value = rounded.to(tl.float32)
+        if n_tile == 0:
+            tl.store(R_OUT + (token * 4 + j) * H + h, rounded, h < H)
+            squares += value * value
+        weights = tl.load(
+            FN + n[:, None] * (4 * H) + j * H + h[None, :],
+            (n[:, None] < 24) & (h[None, :] < H), other=0,
+        )
+        dots = tl.fma(weights, value[None, :], dots)
+    projected = tl.sum(dots, axis=1)
+    tl.store(MUL + (h_tile * TOKENS + token) * 24 + n, projected, n < 24)
+    if n_tile == 0:
+        tl.store(SQUARE + h_tile * TOKENS + token, tl.sum(squares, axis=0))
+
+
+def _validate(x, residual, post, comb, fn):
+    if residual.ndim != 3 or residual.shape[1:] != (4, 5120):
+        raise ValueError("Prototype supports only V4.1 HC4 / hidden=5120")
+    t = residual.shape[0]
+    expected = [(x, (t, 5120), torch.bfloat16),
+                (residual, (t, 4, 5120), torch.bfloat16),
+                (post, (t, 4, 1), torch.float32),
+                (comb, (t, 4, 4), torch.float32),
+                (fn, (24, 20480), torch.float32)]
+    for tensor, shape, dtype in expected:
+        if tensor.shape != shape or tensor.dtype != dtype or not tensor.is_contiguous():
+            raise ValueError(f"Expected contiguous {shape} {dtype}")
+        if tensor.device != residual.device:
+            raise ValueError("All inputs must have the same device")
+    if not residual.is_cuda:
+        raise ValueError("GPU entry point; CPU sanity checks use the reference separately")
+    if not 1 <= t < 32:
+        raise ValueError("FP32-prenorm decode path only: 1..31 query tokens")
+    return t
+
+
+def post_prenorm(x, residual, post, comb, fn, *, block_h=256, block_n=4):
+    """Return rounded residual, partial projection and partial squared norm."""
+    t = _validate(x, residual, post, comb, fn)
+    if block_h not in (128, 256, 512) or block_n not in (2, 4, 8):
+        raise ValueError("Unsupported experimental launch configuration")
+    splits = triton.cdiv(5120, block_h)
+    out = torch.empty_like(residual)
+    mul = torch.empty((splits, t, 24), dtype=torch.float32, device=x.device)
+    sq = torch.empty((splits, t), dtype=torch.float32, device=x.device)
+    _post_prenorm[(t, triton.cdiv(24, block_n), splits)](
+        x, residual, post, comb, fn, out, mul, sq,
+        t, 5120, block_h, block_n, splits, num_warps=4,
+    )
+    return out, mul, sq
+
+
+def fused_post_pre(x, residual, post, comb, fn, scale, base, pre_mix,
+                   norm_weight, *, rms_eps, norm_eps, hc_eps=1e-6,
+                   sinkhorn_repeat=20,
+                   block_h=256, block_n=4):
+    """Research equivalent of post + mhc_pre_delayed_tilelang, returning five tensors.
+
+    Engram injection must already have happened, or this function must be
+    bypassed. Never fuse across an Engram hook, pipeline boundary or DSpark
+    auxiliary hidden-state snapshot. Integration is deliberately not supplied.
+    """
+    from vllm.model_executor.kernels.mhc.warmup import MHC_PRE_NORM_KERNEL
+
+    t = _validate(x, residual, post, comb, fn)
+    for tensor, shape, dtype in [
+        (scale, (3,), torch.float32), (base, (24,), torch.float32),
+        (pre_mix, (t, 4), torch.float32), (norm_weight, (5120,), torch.bfloat16),
+    ]:
+        if (tensor.shape != shape or tensor.dtype != dtype
+                or not tensor.is_contiguous() or tensor.device != residual.device):
+            raise ValueError(f"Expected contiguous {shape} {dtype} on {residual.device}")
+    out, mul, sq = post_prenorm(x, residual, post, comb, fn,
+                               block_h=block_h, block_n=block_n)
+    next_post = torch.empty((t, 4), device=x.device, dtype=torch.float32)
+    next_comb = torch.empty((t, 16), device=x.device, dtype=torch.float32)
+    layer_input = torch.empty((t, 5120), device=x.device, dtype=torch.bfloat16)
+    next_pre = torch.empty_like(pre_mix)
+    # Retain the installed V4.1 epilogue: carried pre-mix, Sinkhorn, BF16
+    # collapse boundary and input RMSNorm. Only producer kernels change.
+    MHC_PRE_NORM_KERNEL(
+        mul, sq, scale, base, out, next_post, next_comb, layer_input,
+        norm_weight, pre_mix, next_pre, hidden_size=5120,
+        rms_eps=rms_eps, hc_pre_eps=hc_eps, hc_sinkhorn_eps=hc_eps,
+        hc_post_mult_value=2.0, sinkhorn_repeat=sinkhorn_repeat,
+        norm_eps=norm_eps, hc_mult=4, use_pre_mix_in=True,
+        save_pre_mix=True, rms_numel=20480,
+    )
+    return out, next_post.unsqueeze(-1), next_comb.view(t, 4, 4), layer_input, next_pre
+
+
+def post_pre_or_native(x, residual, post, comb, fn, scale, base,
+                       rms_eps, hc_eps, post_alpha, sinkhorn_repeat,
+                       pre_mix, norm_weight, norm_eps):
+    """Guarded serving adapter; retain the native prefill/unsupported-shape path."""
+    if (os.environ.get('VLLM_DEEPINFER_SM80_MHC', '0') == '1'
+            and residual.shape[1:] == (4, 5120)
+            and 1 <= residual.shape[0] < 32 and pre_mix is not None
+            and all(t.is_contiguous() for t in
+                    (x, residual, post, comb, fn, pre_mix, norm_weight))
+            and post_alpha == 2.0):
+        small=residual.shape[0]<=5
+        return fused_post_pre(x, residual, post, comb, fn, scale, base,
+            pre_mix, norm_weight, rms_eps=rms_eps, norm_eps=norm_eps,
+            hc_eps=hc_eps, sinkhorn_repeat=sinkhorn_repeat,
+            block_h=int(os.environ.get('VLLM_DEEPINFER_SM80_BLOCK_H','256' if small else '512')),
+            block_n=int(os.environ.get('VLLM_DEEPINFER_SM80_BLOCK_N','4' if small else '8')))
+    from vllm.model_executor.kernels.mhc.tilelang import (
+        mhc_post_tilelang, mhc_pre_delayed_tilelang,
+    )
+    out=mhc_post_tilelang(x, residual, post, comb)
+    return (out, *mhc_pre_delayed_tilelang(
+        out, fn, scale, base, rms_eps, hc_eps, hc_eps, post_alpha,
+        sinkhorn_repeat, pre_mix=pre_mix, norm_weight=norm_weight,
+        norm_eps=norm_eps))
